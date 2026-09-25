@@ -127,13 +127,12 @@ test-e2e:
 # Scheduler
 # ---------------------------------------------------------------------------
 setup-scheduler:
-	@echo "→ Installing anacron daily job..."
-	@SCRIPT=/etc/cron.daily/stock-news-pipeline; \
-	echo "#!/bin/bash" | sudo tee $$SCRIPT > /dev/null; \
-	echo "cd $(CURDIR) && $(PIPELINE) >> /var/log/stock-news-pipeline.log 2>&1" \
-	    | sudo tee -a $$SCRIPT > /dev/null; \
-	sudo chmod +x $$SCRIPT
-	@echo "✓ Installed: /etc/cron.daily/stock-news-pipeline"
+	@echo "→ Installing user crontab hourly job..."
+	@crontab -l | grep -v 'stock-news-pipeline' > /tmp/crontab.tmp || true
+	@echo "0 * * * * cd $(CURDIR) && $(PIPELINE) >> $(CURDIR)/pipeline.log 2>&1" >> /tmp/crontab.tmp
+	@crontab /tmp/crontab.tmp
+	@rm /tmp/crontab.tmp
+	@echo "✓ Hourly job installed in user crontab (runs at top of every hour)"
 
 # ---------------------------------------------------------------------------
 # Lint
