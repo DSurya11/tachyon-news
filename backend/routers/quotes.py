@@ -26,13 +26,9 @@ def _fetch_quote_finnhub(symbol: str) -> dict:
     if settings.finnhub_api_key == "your_finnhub_key_here":
         data = {
             "symbol": symbol,
-            "c": 150.0,
-            "d": 1.5,
-            "dp": 1.01,
-            "h": 151.0,
-            "l": 149.0,
-            "o": 149.5,
-            "pc": 148.5,
+            "price": 150.0,
+            "change": 1.5,
+            "pct_change": 1.01,
             "t": 0
         }
         quote_cache[symbol] = data
@@ -43,8 +39,14 @@ def _fetch_quote_finnhub(symbol: str) -> dict:
     try:
         resp = httpx.get(url, params=params, timeout=5.0)
         resp.raise_for_status()
-        data = resp.json()
-        data["symbol"] = symbol
+        raw = resp.json()
+        data = {
+            "symbol": symbol,
+            "price": raw.get("c", 0.0),
+            "change": raw.get("d", 0.0),
+            "pct_change": raw.get("dp", 0.0),
+            "t": raw.get("t", 0)
+        }
         quote_cache[symbol] = data
         return data
     except Exception as e:
@@ -84,14 +86,5 @@ def get_candles(symbol: str, days: int = Query(30, ge=1, le=365), db: Session = 
     
     return {
         "symbol": symbol,
-        "candles": [
-            {
-                "date": c.date,
-                "open": c.open,
-                "high": c.high,
-                "low": c.low,
-                "close": c.close,
-                "volume": c.volume
-            } for c in candles
-        ]
+        "candles": [c.close for c in candles]
     }
