@@ -24,11 +24,22 @@ def _fetch_quote_finnhub(symbol: str) -> dict:
 
     # If API key is dummy, return mock
     if settings.finnhub_api_key == "your_finnhub_key_here":
+        import hashlib
+        import random
+        seed = int(hashlib.md5(symbol.encode()).hexdigest(), 16)
+        rng = random.Random(seed)
+        price = 20.0 + (seed % 480)
+        for i in range(30):
+            price *= (1 + (rng.random() - 0.5) * 0.06)
+            
+        change = (rng.random() - 0.5) * 5.0
+        pct_change = (change / price) * 100
+        
         data = {
             "symbol": symbol,
-            "price": 150.0,
-            "change": 1.5,
-            "pct_change": 1.01,
+            "price": round(price, 2),
+            "change": round(change, 2),
+            "pct_change": round(pct_change, 2),
             "t": 0
         }
         quote_cache[symbol] = data

@@ -27,12 +27,31 @@ def fetch_candles(ticker: str, start_ts: int, end_ts: int) -> Optional[dict]:
     
     if settings.finnhub_api_key == "your_finnhub_key_here":
         logger.warning(f"Finnhub API key not configured. Mocking data for {ticker}.")
-        # Mock 30 days of data
+        import hashlib
+        import random
+        # Seed the random generator with the ticker symbol so it's consistent across runs
+        seed = int(hashlib.md5(ticker.encode()).hexdigest(), 16)
+        rng = random.Random(seed)
+        
+        base_price = 20.0 + (seed % 480)
+        c, h, l, o = [], [], [], []
+        current_price = base_price
+        
+        for i in range(30):
+            # random daily return between -3% and +3%
+            daily_ret = (rng.random() - 0.5) * 0.06
+            current_price *= (1 + daily_ret)
+            
+            o.append(round(current_price * 0.99, 2))
+            c.append(round(current_price, 2))
+            h.append(round(current_price * 1.02, 2))
+            l.append(round(current_price * 0.98, 2))
+            
         return {
-            "c": [150.0 + i for i in range(30)],
-            "h": [155.0 + i for i in range(30)],
-            "l": [145.0 + i for i in range(30)],
-            "o": [148.0 + i for i in range(30)],
+            "c": c,
+            "h": h,
+            "l": l,
+            "o": o,
             "t": [start_ts + (i * 86400) for i in range(30)],
             "v": [1000000] * 30,
             "s": "ok"
