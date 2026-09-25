@@ -50,3 +50,4 @@ async def health(db: Session = Depends(get_db)):
 app.include_router(news.router)
 app.include_router(reports.router)
 app.include_router(quotes.router)
+# trigger reload

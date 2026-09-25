@@ -238,7 +238,7 @@
     loadTV().then(function () {
       chart.innerHTML = '';
       new window.TradingView.widget({
-        symbol: (EXCHANGE[sym] || 'NASDAQ') + ':' + sym,
+        symbol: EXCHANGE[sym] ? EXCHANGE[sym] + ':' + sym : sym,
         width: '100%', height: 500, theme: 'dark', style: '1', locale: 'en',
         enable_publishing: false, allow_symbol_change: true,
         container_id: 'tradingview_chart'
