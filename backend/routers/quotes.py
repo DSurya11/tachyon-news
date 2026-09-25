@@ -22,28 +22,10 @@ def _fetch_quote_finnhub(symbol: str) -> dict:
     if symbol in quote_cache:
         return quote_cache[symbol]
 
-    # If API key is dummy, return mock
-    if settings.finnhub_api_key == "your_finnhub_key_here":
-        import hashlib
-        import random
-        seed = int(hashlib.md5(symbol.encode()).hexdigest(), 16)
-        rng = random.Random(seed)
-        price = 20.0 + (seed % 480)
-        for i in range(30):
-            price *= (1 + (rng.random() - 0.5) * 0.06)
-            
-        change = (rng.random() - 0.5) * 5.0
-        pct_change = (change / price) * 100
-        
-        data = {
-            "symbol": symbol,
-            "price": round(price, 2),
-            "change": round(change, 2),
-            "pct_change": round(pct_change, 2),
-            "t": 0
-        }
-        quote_cache[symbol] = data
-        return data
+    # If API key is missing, return error
+    if settings.finnhub_api_key == "your_finnhub_key_here" or not settings.finnhub_api_key:
+        logger.error(f"Finnhub API key not configured. Cannot fetch quote for {symbol}.")
+        return {"symbol": symbol, "error": "API key not configured"}
         
     url = "https://finnhub.io/api/v1/quote"
     params = {"symbol": symbol, "token": settings.finnhub_api_key}
