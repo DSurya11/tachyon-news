@@ -31,7 +31,7 @@ def generate_report(trading_day: date, prompt: str, article_ids: list[int]) -> O
             # We use launch_persistent_context to share cookies with the user's logged-in Chrome
             context = p.chromium.launch_persistent_context(
                 user_data_dir=settings.chrome_profile_dir,
-                headless=True,
+                headless=False,
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--no-sandbox"
