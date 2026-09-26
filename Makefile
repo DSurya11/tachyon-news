@@ -179,3 +179,7 @@ down:
 	@echo "→ Stopping Database..."
 	@$(MAKE) db-down
 	@echo "✓ All services are DOWN."
+
+run-claude:
+	@echo "→ Running Claude web test..."
+	@venv/bin/python test_claude.py

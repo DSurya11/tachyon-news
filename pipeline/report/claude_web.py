@@ -56,10 +56,10 @@ def generate_report(trading_day: date, prompt: str, article_ids: list[int]) -> O
                 # Attempt to click Continue with Google if present
                 google_btn = page.get_by_text("Continue with Google")
                 if google_btn.is_visible(timeout=5000):
-                    logger.info("Clicking 'Continue with Google'")
+                    logger.info("Clicking 'Continue with Google'. If a popup appears or you need to select an account, PLEASE DO SO MANUALLY IN THE BROWSER NOW. Waiting up to 2 minutes...")
                     google_btn.click()
                     # Wait for redirect and reload
-                    page.wait_for_selector('div[contenteditable="true"]', timeout=30000)
+                    page.wait_for_selector('div[contenteditable="true"]', timeout=120000)
                 else:
                     logger.warning("Could not find chat input or Google login button. Giving up.")
                     context.close()

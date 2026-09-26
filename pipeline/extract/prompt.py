@@ -34,6 +34,7 @@ STRICT RULES:
 4. "numbers.value" must be a plain numeric string as it appears in the article (e.g. "30.0", "12").
 5. If a field has no data, use [] for arrays and "other"/"neutral"/"" for strings.
 6. Respond with valid JSON only.
+(Note: Cache busted after 512-token truncation bug)
 """
 
 # ---------------------------------------------------------------------------
