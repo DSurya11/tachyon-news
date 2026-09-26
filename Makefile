@@ -14,12 +14,16 @@ PIPELINE := $(VENV)/bin/python -m pipeline.run_pipeline
 .PHONY: help setup db-up db-down db-reset migrate \
         run-pipeline dev-backend \
         test test-unit test-integration test-e2e \
-        setup-scheduler lint clean
+        setup-scheduler lint clean up down
 
 # Default target
 help:
 	@echo ""
 	@echo "  Stock-News Pipeline — available targets:"
+	@echo ""
+	@echo "  Services"
+	@echo "    make up                Start all services (DB, OmniRoute, Backend, Frontend) in background"
+	@echo "    make down              Stop all services running in background"
 	@echo ""
 	@echo "  Setup"
 	@echo "    make setup             Create venv, install deps, copy .env.example → .env"
@@ -147,3 +151,31 @@ clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -name "*.pyc" -delete 2>/dev/null || true
 	rm -rf htmlcov .coverage .pytest_cache
+
+# ---------------------------------------------------------------------------
+# Services (Up / Down)
+# ---------------------------------------------------------------------------
+up: db-up
+	@echo "→ Starting OmniRoute (port 8000)..."
+	@nohup omniroute serve --no-open > omniroute.log 2>&1 & echo $$! > .omniroute.pid
+	@echo "→ Starting FastAPI Backend (port 8080)..."
+	@nohup $(UVICORN) backend.main:app --host 0.0.0.0 --port 8080 > backend.log 2>&1 & echo $$! > .backend.pid
+	@echo "→ Starting Frontend (port 3000)..."
+	@nohup $(PYTHON) -m http.server 3000 --directory frontend/terminal-stock-news > frontend.log 2>&1 & echo $$! > .frontend.pid
+	@echo ""
+	@echo "✓ All services are UP in the background!"
+	@echo "  - Frontend:  http://localhost:3000"
+	@echo "  - Backend:   http://localhost:8080"
+	@echo "  - OmniRoute: http://localhost:8000"
+	@echo "  (Logs are written to omniroute.log, backend.log, frontend.log)"
+
+down:
+	@echo "→ Stopping Frontend..."
+	@-if [ -f .frontend.pid ]; then kill `cat .frontend.pid` 2>/dev/null || true; rm .frontend.pid; fi
+	@echo "→ Stopping FastAPI Backend..."
+	@-if [ -f .backend.pid ]; then kill `cat .backend.pid` 2>/dev/null || true; rm .backend.pid; fi
+	@echo "→ Stopping OmniRoute..."
+	@-if [ -f .omniroute.pid ]; then kill `cat .omniroute.pid` 2>/dev/null || true; rm .omniroute.pid; fi
+	@echo "→ Stopping Database..."
+	@$(MAKE) db-down
+	@echo "✓ All services are DOWN."
