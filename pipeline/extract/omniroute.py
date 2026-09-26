@@ -75,12 +75,15 @@ def _parse_llm_response(content: str | list | None) -> dict | None:
         return None
         
     if isinstance(content, list):
-        if len(content) > 0 and hasattr(content[0], "text"):
-            content = content[0].text
-        elif len(content) > 0 and isinstance(content[0], dict) and "text" in content[0]:
-            content = content[0]["text"]
-        else:
-            content = str(content)
+        full_text = []
+        for block in content:
+            if hasattr(block, "text"):
+                full_text.append(block.text)
+            elif isinstance(block, dict) and "text" in block:
+                full_text.append(block["text"])
+            else:
+                full_text.append(str(block))
+        content = "".join(full_text)
             
     if not isinstance(content, str):
         content = str(content)
@@ -133,7 +136,7 @@ def _extract_article(client: OpenAI, article: Article) -> dict | None:
                 {"role": "user",   "content": user_msg},
             ],
             temperature=0.0,      # deterministic — we want facts, not creativity
-            max_tokens=512,
+            max_tokens=4096,
         )
     except APIConnectionError as exc:
         log.error("OmniRoute connection error: %s", exc)
