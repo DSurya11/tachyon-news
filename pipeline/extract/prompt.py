@@ -46,8 +46,8 @@ def build_user_prompt(headline: str, body: str | None) -> str:
     Falls back to headline-only when body is unavailable.
     """
     if body and body.strip():
-        # Truncate body to 4000 chars to stay within context limits of free models
-        body_section = body.strip()[:4000]
+        # Truncate body to 2000 chars to stay within context limits of free models
+        body_section = body.strip()[:2000]
         content = f"HEADLINE: {headline}\n\nBODY:\n{body_section}"
     else:
         content = (

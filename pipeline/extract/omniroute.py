@@ -59,7 +59,7 @@ def _make_client() -> OpenAI:
 # JSON extraction from LLM response
 # ---------------------------------------------------------------------------
 
-_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
 
 
 def _parse_llm_response(content: str | list | None) -> dict | None:
@@ -261,6 +261,7 @@ def run_extraction(batch_size: int = 5, max_articles: int | None = None) -> dict
                 if data is None:
                     log.warning("Extraction failed for article %d", article.id)
                     stats["failed"] += 1
+                    article.status = 'extraction_failed'
                     continue
 
                 # Validate required fields
@@ -270,6 +271,7 @@ def run_extraction(batch_size: int = 5, max_articles: int | None = None) -> dict
                         "Extraction invalid for article %d: %s", article.id, errors
                     )
                     stats["failed"] += 1
+                    article.status = 'extraction_failed'
                     continue
 
                 # Verify evidence + numbers against body
