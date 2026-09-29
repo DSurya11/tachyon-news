@@ -27,17 +27,16 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, date, datetime, timedelta
 
-import pytz
 from bs4 import BeautifulSoup, Tag
 
+from pipeline import market_time
+from pipeline.market_time import ET
 from pipeline.scraper.dedup import canonical_url, title_hash
 from pipeline.scraper.sector_map import get_sector
 
 log = logging.getLogger(__name__)
-
-ET = pytz.timezone("America/New_York")
 
 # Params we do NOT want on Finviz internal links
 _FINVIZ_BASE = "https://finviz.com"
@@ -72,7 +71,7 @@ class ParsedArticle:
     source_name: str
     hash: str
     published_at: datetime | None
-    trading_day: "date | None"
+    trading_day: date | None
     is_internal: bool
     tickers: list[TickerData] = field(default_factory=list)
 
@@ -87,12 +86,10 @@ def parse_age(age_text: str, scrape_time: datetime) -> datetime | None:
 
     m = _AGE_MIN_RE.match(t)
     if m:
-        from datetime import timedelta
         return scrape_time - timedelta(minutes=int(m.group(1)))
 
     m = _AGE_HOUR_RE.match(t)
     if m:
-        from datetime import timedelta
         return scrape_time - timedelta(hours=int(m.group(1)))
 
     m = _AGE_DATE_RE.match(t)
@@ -105,34 +102,24 @@ def parse_age(age_text: str, scrape_time: datetime) -> datetime | None:
         now_et = scrape_time.astimezone(ET)
         year = now_et.year
         try:
-            candidate = ET.localize(
-                datetime(year, month, day_str, 0, 0, 0)
-            )
-        except Exception:
+            candidate = ET.localize(datetime(year, month, day_str))  # noqa: DTZ001 — pytz localize
+        except ValueError:
             return None
         # If candidate is more than 1 day in the future, roll back a year
         if (candidate - scrape_time).total_seconds() > 86400:
-            candidate = ET.localize(datetime(year - 1, month, day_str, 0, 0, 0))
-        return candidate.astimezone(timezone.utc)
+            try:
+                candidate = ET.localize(datetime(year - 1, month, day_str))  # noqa: DTZ001
+            except ValueError:  # Feb-29 in a non-leap year
+                return None
+        return candidate.astimezone(UTC)
 
     log.debug("Unknown age format: %r", age_text)
     return None
 
 
-def compute_trading_day(published_at: datetime | None, scrape_time: datetime) -> "date | None":
-    """
-    US trading day boundary: 4 PM ET.
-    Articles published before 4 PM ET belong to that calendar day;
-    articles published at/after 4 PM ET belong to the NEXT trading day.
-    (Weekend articles roll to Monday — simplified here to just use date.)
-    """
-    if published_at is None:
-        return None
-    from datetime import date, timedelta
-    et_time = published_at.astimezone(ET)
-    if et_time.hour >= 16:
-        return (et_time + timedelta(days=1)).date()
-    return et_time.date()
+def compute_trading_day(published_at: datetime | None, scrape_time: datetime | None = None) -> date | None:
+    """US trading day for an article (4 PM ET close, weekends roll to Monday)."""
+    return market_time.compute_trading_day(published_at)
 
 
 # ---------------------------------------------------------------------------
@@ -212,14 +199,8 @@ def _parse_row(row: Tag, scrape_time: datetime) -> ParsedArticle | None:
 
     # External = has rel="nofollow"; Internal = starts with /news/
     is_external = "nofollow" in rel
-    if is_external:
-        raw_url = href
-    else:
-        # Internal Finviz URL — prepend base
-        if href.startswith("/"):
-            raw_url = _FINVIZ_BASE + href
-        else:
-            raw_url = href
+    # Internal Finviz links are site-relative (/news/...) — prepend the base
+    raw_url = _FINVIZ_BASE + href if href.startswith("/") else href
 
     if not raw_url:
         return None
@@ -233,7 +214,7 @@ def _parse_row(row: Tag, scrape_time: datetime) -> ParsedArticle | None:
     source_name = source_spans[-1].get_text(strip=True) if source_spans else ""
 
     t_hash = title_hash(source_name, headline)
-    trading_day = compute_trading_day(published_at, scrape_time)
+    trading_day = compute_trading_day(published_at)
 
     # ── Ticker anchors ────────────────────────────────────────────────────
     # Only <a> tags with class "fv-label stock-news-label"; skip bare <span>

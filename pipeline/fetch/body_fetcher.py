@@ -1,23 +1,21 @@
 """
 pipeline/fetch/body_fetcher.py
 ──────────────────────────────
-Async body fetch loop — pulls article bodies for all articles with
-status='new' or status='noise_tagged' (we fetch even noise-tagged articles
-so the body is available for more accurate noise verification later).
+Async body fetch loop for articles with status='new'.
 
-Architecture (from implementation plan):
-  GLOBAL_SEMAPHORE  = asyncio.Semaphore(20)   — total concurrent requests
-  DOMAIN_SEMAPHORE  = defaultdict(Semaphore(3))— per-domain concurrency
-  BATCH_SIZE        = 50
-  TIMEOUT           = httpx.Timeout(10.0, connect=5.0)
-  RETRIES           = 3
-  BACKOFF_BASE      = 1.5 s + random jitter
+  - Global concurrency 20, per-domain concurrency 3 (semaphores are created
+    per run so they are bound to the running event loop)
+  - Batches of 50, newest articles first, capped by FETCH_MAX_PER_RUN
+  - Retries only transient failures (network errors, 408/429/5xx) with
+    exponential backoff + jitter; a 403/404 is final on the first attempt
+  - Per-domain circuit breaker (5 failures → open 5 min → half-open probe)
+  - Hard-paywall domains (FETCH_SKIP_DOMAINS) are never requested
+  - trafilatura runs in a thread pool so parsing never blocks the loop
+  - Writes articles.body / content_quality / status and the scrape run's
+    per_domain_stats
 
-- trafilatura runs in loop.run_in_executor() (CPU off event loop)
-- asyncio.gather(..., return_exceptions=True) — one failure never aborts batch
-- Per-domain circuit breaker (5 failures → open 5 min → half-open probe)
-- Internal Finviz URLs: prepend https://finviz.com before fetching
-- Updates articles.body, articles.status, scrape_runs.per_domain_stats
+Noise-tagged articles are not fetched: they are never extracted, so the
+request would be wasted (and most of them are wire-service boilerplate).
 """
 from __future__ import annotations
 
@@ -25,148 +23,136 @@ import asyncio
 import logging
 import random
 from collections import defaultdict
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 import httpx
+from sqlalchemy import func, select
 
+from pipeline.config import settings
 from pipeline.db.local import LocalSession
 from pipeline.db.models import Article, ScrapeRun
-from pipeline.fetch.circuit_breaker import CircuitOpenError, registry as cb_registry
+from pipeline.fetch.circuit_breaker import registry as cb_registry
 from pipeline.fetch.trafilatura_worker import extract as trafilatura_extract
 
 log = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants (from implementation plan)
-# ---------------------------------------------------------------------------
-GLOBAL_SEMAPHORE  = asyncio.Semaphore(20)
-DOMAIN_SEMAPHORE: dict[str, asyncio.Semaphore] = defaultdict(lambda: asyncio.Semaphore(3))
-BATCH_SIZE        = 50
-TIMEOUT           = httpx.Timeout(10.0, connect=5.0)
-RETRIES           = 3
-BACKOFF_BASE      = 1.5   # seconds
-FINVIZ_BASE       = "https://finviz.com"
+GLOBAL_CONCURRENCY = 20
+DOMAIN_CONCURRENCY = 3
+# Minimum gap between request starts to one domain. Bursts (e.g. a first pass over
+# ~90 Economic Times links) trip publishers' bot protection into 403s.
+DOMAIN_MIN_INTERVAL_S = 0.75
+BATCH_SIZE = 50
+TIMEOUT = httpx.Timeout(10.0, connect=5.0)
+RETRIES = 3
+BACKOFF_BASE = 1.5  # seconds
+FINVIZ_BASE = "https://finviz.com"
+RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 
-# Statuses we will attempt to fetch bodies for
-FETCHABLE_STATUSES = ("new", "noise_tagged")
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+}
 
 
-# ---------------------------------------------------------------------------
-# Per-article fetch with retries + circuit breaker
-# ---------------------------------------------------------------------------
+def domain_of(url: str) -> str:
+    """Registrable-ish host used for rate limiting and stats ('www.' stripped)."""
+    return urlparse(url).netloc.lower().removeprefix("www.")
 
-async def _fetch_one(
-    client: httpx.AsyncClient,
-    article_id: int,
-    url: str,
-) -> dict:
-    """
-    Fetch a single article URL, extract body with trafilatura.
-    Returns a result dict that is applied to the DB regardless of outcome.
-    """
-    domain = urlparse(url).netloc.lower().lstrip("www.")
+
+def is_skipped_domain(domain: str, skip: frozenset[str]) -> bool:
+    return any(domain == d or domain.endswith("." + d) for d in skip)
+
+
+@dataclass
+class FetchResult:
+    article_id: int
+    domain: str
+    body: str | None = None
+    content_quality: str = "headline"
+    success: bool = False
+    reason: str = ""
+
+
+@dataclass
+class _Limits:
+    global_sem: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(GLOBAL_CONCURRENCY))
+    domain_sems: dict[str, asyncio.Semaphore] = field(
+        default_factory=lambda: defaultdict(lambda: asyncio.Semaphore(DOMAIN_CONCURRENCY))
+    )
+    domain_next: dict[str, float] = field(default_factory=dict)
+
+    async def pace(self, domain: str) -> None:
+        """Reserve the next start slot for `domain`, sleeping until it arrives."""
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        slot = max(now, self.domain_next.get(domain, now))
+        self.domain_next[domain] = slot + DOMAIN_MIN_INTERVAL_S
+        if slot > now:
+            await asyncio.sleep(slot - now)
+
+
+def _is_retryable(exc: Exception) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in RETRYABLE_STATUS
+    return isinstance(exc, httpx.RequestError | asyncio.TimeoutError)
+
+
+async def _fetch_one(client: httpx.AsyncClient, limits: _Limits, article_id: int, url: str) -> FetchResult:
+    domain = domain_of(url)
+    result = FetchResult(article_id=article_id, domain=domain)
+
+    if is_skipped_domain(domain, settings.fetch_skip_domain_set):
+        result.reason = "skipped_paywall"
+        return result
+
     cb = cb_registry.get(domain)
-
-    # Circuit breaker — fail-fast if domain is open
     if not cb.allow_request():
-        log.debug("[SKIP circuit-open] %s", url)
-        return {
-            "article_id": article_id,
-            "body": None,
-            "content_quality": "headline",
-            "status": "body_fetched",
-            "domain": domain,
-            "success": False,
-            "reason": "circuit_open",
-        }
+        result.reason = "circuit_open"
+        return result
 
-    last_exc: Exception | None = None
     for attempt in range(1, RETRIES + 1):
+        if attempt > 1 and not cb.allow_request():
+            result.reason = "circuit_open"
+            return result
         try:
-            async with GLOBAL_SEMAPHORE:
-                async with DOMAIN_SEMAPHORE[domain]:
+            async with limits.domain_sems[domain]:
+                await limits.pace(domain)
+                async with limits.global_sem:
                     resp = await client.get(url, timeout=TIMEOUT)
-                    resp.raise_for_status()
-
-            cb.record_success()
-            body, quality = await trafilatura_extract(resp.text, url)
-
-            return {
-                "article_id": article_id,
-                "body": body,
-                "content_quality": quality,
-                "status": "body_fetched",
-                "domain": domain,
-                "success": True,
-                "reason": quality,
-            }
-
-        except (httpx.HTTPStatusError, httpx.RequestError, asyncio.TimeoutError) as exc:
-            last_exc = exc
+                resp.raise_for_status()
+        except (TimeoutError, httpx.HTTPError) as exc:
             cb.record_failure()
-            if attempt < RETRIES:
-                wait = BACKOFF_BASE ** attempt + random.uniform(0, 1.0)
-                log.debug(
-                    "[RETRY %d/%d] %s — %s — waiting %.1fs",
-                    attempt, RETRIES, url, exc, wait,
-                )
-                await asyncio.sleep(wait)
-            else:
-                log.warning("[FAILED] %s — %s", url, exc)
+            result.reason = str(exc)[:200]
+            if attempt < RETRIES and _is_retryable(exc):
+                await asyncio.sleep(BACKOFF_BASE**attempt + random.uniform(0, 1.0))
+                continue
+            log.info("[fetch failed] %s — %s", url, result.reason)
+            return result
 
-    return {
-        "article_id": article_id,
-        "body": None,
-        "content_quality": "headline",
-        "status": "body_fetched",
-        "domain": domain,
-        "success": False,
-        "reason": str(last_exc),
-    }
+        cb.record_success()
+        result.body, result.content_quality = await trafilatura_extract(resp.text, url)
+        result.success = True
+        result.reason = result.content_quality
+        return result
+
+    return result
 
 
-# ---------------------------------------------------------------------------
-# Batch runner
-# ---------------------------------------------------------------------------
-
-async def _run_batch(batch: list[tuple[int, str]]) -> list[dict]:
-    """
-    Concurrently fetch all (article_id, url) pairs in this batch.
-    Uses asyncio.gather with return_exceptions=True so one failure
-    never aborts the rest.
-    """
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/125.0.0.0 Safari/537.36"
-        ),
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
-    }
-    async with httpx.AsyncClient(
-        follow_redirects=True,
-        headers=headers,
-        timeout=TIMEOUT,
-    ) as client:
-        tasks = [_fetch_one(client, aid, url) for aid, url in batch]
-        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    results: list[dict] = []
-    for i, r in enumerate(raw_results):
-        if isinstance(r, Exception):
-            aid, url = batch[i]
-            log.error("[EXCEPTION] article %d %s — %s", aid, url, r)
-            results.append({
-                "article_id": aid,
-                "body": None,
-                "content_quality": "headline",
-                "status": "body_fetched",
-                "domain": urlparse(url).netloc.lower().lstrip("www."),
-                "success": False,
-                "reason": str(r),
-            })
+async def _run_batch(client: httpx.AsyncClient, limits: _Limits, batch: list[tuple[int, str]]) -> list[FetchResult]:
+    raw = await asyncio.gather(
+        *(_fetch_one(client, limits, aid, url) for aid, url in batch),
+        return_exceptions=True,
+    )
+    results: list[FetchResult] = []
+    for (aid, url), r in zip(batch, raw, strict=True):
+        if isinstance(r, BaseException):
+            log.error("[fetch exception] article %d %s — %r", aid, url, r)
+            results.append(FetchResult(article_id=aid, domain=domain_of(url), reason=repr(r)[:200]))
         else:
             results.append(r)
     return results
@@ -176,62 +162,59 @@ async def _run_batch(batch: list[tuple[int, str]]) -> list[dict]:
 # DB helpers
 # ---------------------------------------------------------------------------
 
-def _load_pending(limit: int | None = None) -> list[tuple[int, str]]:
-    """Return (article_id, url) pairs that need body fetching."""
+def _resolve_url(url: str) -> str:
+    return FINVIZ_BASE + url if url.startswith("/") else url
+
+
+
+def _load_pending(limit: int) -> list[tuple[int, str]]:
+    """(article_id, url) pairs that still need a body, newest first."""
     with LocalSession() as session:
-        q = (
-            session.query(Article.id, Article.canonical_url)
-            .filter(Article.status.in_(FETCHABLE_STATUSES))
-            .filter(Article.body.is_(None))
-        )
-        if limit:
-            q = q.limit(limit)
-        return [(row[0], row[1]) for row in q.all()]
+        rows = session.execute(
+            select(Article.id, func.coalesce(Article.url, Article.canonical_url))
+            .where(Article.status == "new", Article.body.is_(None))
+            .order_by(Article.published_at.desc().nulls_last(), Article.id.desc())
+            .limit(limit)
+        ).all()
+    return [(aid, _resolve_url(url)) for aid, url in rows]
 
 
-def _apply_results(results: list[dict], scrape_run_id: int | None) -> dict:
-    """Write fetch results to DB. Returns per-domain stats dict."""
-    domain_stats: dict[str, dict] = defaultdict(
-        lambda: {"fetched": 0, "failed": 0, "full": 0, "snippet": 0, "headline": 0}
-    )
+def _empty_stats() -> dict[str, int]:
+    return {"fetched": 0, "failed": 0, "skipped": 0, "full": 0, "snippet": 0, "headline": 0}
+
+
+def _apply_results(results: list[FetchResult], scrape_run_id: int | None) -> dict[str, dict[str, int]]:
+    """Write fetch results to the DB. Returns per-domain stats for this batch."""
+    domain_stats: dict[str, dict[str, int]] = defaultdict(_empty_stats)
 
     with LocalSession() as session:
         for r in results:
-            article = session.get(Article, r["article_id"])
-            if article is None:
+            article = session.get(Article, r.article_id)
+            if article is None or article.status != "new":
                 continue
+            if r.body:
+                article.body = r.body
+            article.content_quality = r.content_quality
+            article.status = "body_fetched"  # headline-only articles are still extracted
 
-            if r["body"]:
-                article.body = r["body"]
-            article.content_quality = r["content_quality"]
-
-            # Status: if was noise_tagged keep that; otherwise set body_fetched
-            if article.status not in ("noise_tagged",):
-                article.status = r["status"]
+            stats = domain_stats[r.domain]
+            if r.success:
+                stats["fetched"] += 1
+                stats[r.content_quality] += 1
+            elif r.reason in ("skipped_paywall", "circuit_open"):
+                stats["skipped"] += 1
             else:
-                # noise-tagged articles get body stored but status unchanged
-                # so the noise filter can use the body later
-                article.status = "noise_tagged"
+                stats["failed"] += 1
 
-            d = r["domain"]
-            if r["success"]:
-                domain_stats[d]["fetched"] += 1
-                domain_stats[d][r["content_quality"]] += 1
-            else:
-                domain_stats[d]["failed"] += 1
-
-        # Update scrape_run per_domain_stats if provided
-        if scrape_run_id is not None:
+        if scrape_run_id is not None and domain_stats:
             run = session.get(ScrapeRun, scrape_run_id)
-            if run:
-                existing = dict(run.per_domain_stats or {})
+            if run is not None:
+                merged = {d: dict(v) for d, v in (run.per_domain_stats or {}).items()}
                 for domain, stats in domain_stats.items():
-                    if domain in existing:
-                        for k, v in stats.items():
-                            existing[domain][k] = existing[domain].get(k, 0) + v
-                    else:
-                        existing[domain] = stats
-                run.per_domain_stats = existing
+                    bucket = merged.setdefault(domain, {})
+                    for k, v in stats.items():
+                        bucket[k] = bucket.get(k, 0) + v
+                run.per_domain_stats = merged  # reassign so SQLAlchemy sees the change
 
         session.commit()
 
@@ -242,60 +225,32 @@ def _apply_results(results: list[dict], scrape_run_id: int | None) -> dict:
 # Public entry point
 # ---------------------------------------------------------------------------
 
-async def run_body_fetch(
-    scrape_run_id: int | None = None,
-    limit: int | None = None,
-) -> dict:
-    """
-    Fetch bodies for all pending articles in batches of BATCH_SIZE.
-
-    Args:
-        scrape_run_id: Optional ScrapeRun to update per_domain_stats on.
-        limit:         Cap total articles processed (useful for testing).
-
-    Returns:
-        Aggregated per-domain stats dict.
-    """
-    pending = _load_pending(limit=limit)
+async def run_body_fetch(scrape_run_id: int | None = None, limit: int | None = None) -> dict:
+    """Fetch bodies for pending articles. Returns aggregated per-domain stats."""
+    pending = _load_pending(limit or settings.fetch_max_per_run)
     log.info("Body fetcher: %d articles to fetch", len(pending))
-
     if not pending:
-        log.info("No pending articles — nothing to fetch.")
         return {}
 
-    # Resolve internal Finviz URLs
-    resolved: list[tuple[int, str]] = []
-    for aid, url in pending:
-        if url.startswith("/"):
-            url = FINVIZ_BASE + url
-        resolved.append((aid, url))
+    limits = _Limits()
+    all_stats: dict[str, dict[str, int]] = defaultdict(_empty_stats)
 
-    all_stats: dict[str, dict] = defaultdict(
-        lambda: {"fetched": 0, "failed": 0, "full": 0, "snippet": 0, "headline": 0}
-    )
-
-    # Process in batches
-    for i in range(0, len(resolved), BATCH_SIZE):
-        batch = resolved[i : i + BATCH_SIZE]
-        batch_num = i // BATCH_SIZE + 1
-        total_batches = (len(resolved) + BATCH_SIZE - 1) // BATCH_SIZE
-        log.info("Batch %d/%d (%d articles)…", batch_num, total_batches, len(batch))
-
-        results = await _run_batch(batch)
-        batch_stats = _apply_results(results, scrape_run_id)
-
-        # Merge into aggregate
-        for domain, stats in batch_stats.items():
-            for k, v in stats.items():
-                all_stats[domain][k] = all_stats[domain].get(k, 0) + v
-
-        # Summary for this batch
-        fetched = sum(1 for r in results if r["success"])
-        full    = sum(1 for r in results if r["content_quality"] == "full")
-        log.info(
-            "Batch %d done: %d/%d fetched, %d full",
-            batch_num, fetched, len(batch), full,
-        )
+    async with httpx.AsyncClient(follow_redirects=True, headers=HEADERS, timeout=TIMEOUT) as client:
+        total_batches = (len(pending) + BATCH_SIZE - 1) // BATCH_SIZE
+        for batch_num, start in enumerate(range(0, len(pending), BATCH_SIZE), start=1):
+            batch = pending[start : start + BATCH_SIZE]
+            results = await _run_batch(client, limits, batch)
+            for domain, stats in _apply_results(results, scrape_run_id).items():
+                for k, v in stats.items():
+                    all_stats[domain][k] += v
+            log.info(
+                "Batch %d/%d: %d/%d fetched, %d full",
+                batch_num,
+                total_batches,
+                sum(r.success for r in results),
+                len(batch),
+                sum(r.content_quality == "full" for r in results),
+            )
 
     return dict(all_stats)
 

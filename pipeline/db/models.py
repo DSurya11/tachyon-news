@@ -6,7 +6,7 @@ All SQLAlchemy ORM table definitions for the stock-news pipeline.
 Local PostgreSQL holds the complete dataset (including article bodies,
 raw evidence, etc.).  Neon holds only the public-safe subset.
 
-Eight tables:
+Twelve tables:
   1. articles
   2. article_tickers
   3. extractions
@@ -16,6 +16,9 @@ Eight tables:
   7. reports
   8. sector_day_features   (schema-only; populated in a future milestone)
   9. story_clusters        (schema-only; deferred)
+ 10. users                 (dashboard accounts; never synced)
+ 11. user_sessions         (login sessions; never synced)
+ 12. symbol_checks         (does this ticker really trade? hides LLM-invented symbols)
 """
 from __future__ import annotations
 
@@ -30,15 +33,13 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    JSON,
     Numeric,
     PrimaryKeyConstraint,
     Text,
-    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import DeclarativeBase, relationship
-
+from sqlalchemy.sql import func
 
 # ---------------------------------------------------------------------------
 # Base
@@ -46,7 +47,6 @@ from sqlalchemy.orm import DeclarativeBase, relationship
 
 class Base(DeclarativeBase):
     """Shared declarative base for all ORM models."""
-    pass
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +58,8 @@ class Article(Base):
     One row per unique news article (deduplicated by canonical_url).
 
     Status pipeline:
-        new → noise_tagged → body_fetched → extracted → verified
+        new → body_fetched → extracted | verified | extraction_failed
+        new → noise_tagged (terminal; body is still fetched)
     """
     __tablename__ = "articles"
 
@@ -66,6 +67,9 @@ class Article(Base):
 
     # Deduplication
     canonical_url: str = Column(Text, nullable=False, unique=True)
+    # Original (case-preserved) URL used for fetching and linking.
+    # canonical_url is lowercased for dedup and may 404 on case-sensitive sites.
+    url: str = Column(Text, nullable=True)
     headline: str = Column(Text, nullable=False)
     # sha256(source_name + normalize_whitespace(headline.lower()))
     # Index only — not UNIQUE; catches same story / URL variant from same outlet
@@ -81,7 +85,7 @@ class Article(Base):
     first_seen_at: datetime = Column(
         TIMESTAMP(timezone=True),
         nullable=False,
-        server_default="now()",
+        server_default=func.now(),
         comment="Set once at insert; never updated",
     )
     last_seen_at: datetime = Column(
@@ -122,7 +126,22 @@ class Article(Base):
         Text,
         nullable=False,
         default="new",
-        comment="new|noise_tagged|body_fetched|extracted|verified",
+        comment="new|noise_tagged|body_fetched|extracted|verified|extraction_failed",
+    )
+    extraction_attempts: int = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="LLM extraction attempts; failed articles are retried up to a limit",
+    )
+
+    market: str = Column(
+        Text,
+        nullable=False,
+        default="global",
+        server_default="global",
+        comment="global (Finviz: US-listed & international) | india (Indian RSS feeds)",
     )
 
     # Trading day (4 PM ET boundary)
@@ -149,6 +168,7 @@ class Article(Base):
         Index("ix_articles_status", "status"),
         Index("ix_articles_trading_day", "trading_day"),
         Index("ix_articles_published_at", "published_at"),
+        Index("ix_articles_market", "market"),
     )
 
     def __repr__(self) -> str:
@@ -240,6 +260,11 @@ class Extraction(Base):
         nullable=True,
         comment="Public-safe one-sentence summary",
     )
+    sector: str = Column(
+        Text,
+        nullable=True,
+        comment="LLM-assigned GICS sector; used when no ticker has a known sector (e.g. Indian stocks)",
+    )
     evidence: str = Column(
         Text,
         nullable=True,
@@ -255,7 +280,7 @@ class Extraction(Base):
     created_at: datetime = Column(
         TIMESTAMP(timezone=True),
         nullable=False,
-        server_default="now()",
+        server_default=func.now(),
     )
 
     # Relationship
@@ -435,10 +460,20 @@ class Report(Base):
         nullable=True,
         comment="Article IDs cited in this report",
     )
+    provider: str = Column(
+        Text,
+        nullable=True,
+        comment="Which report provider produced the content (anthropic|claude_web|omniroute)",
+    )
+    top_picks: list = Column(
+        JSONB,
+        nullable=True,
+        comment="Writer-ranked must-read stories: [{id, rank, why}]",
+    )
     created_at: datetime = Column(
         TIMESTAMP(timezone=True),
         nullable=False,
-        server_default="now()",
+        server_default=func.now(),
     )
 
     def __repr__(self) -> str:
@@ -489,7 +524,7 @@ class StoryCluster(Base):
     created_at: datetime = Column(
         TIMESTAMP(timezone=True),
         nullable=True,
-        server_default="now()",
+        server_default=func.now(),
     )
 
     def __repr__(self) -> str:
@@ -497,17 +532,110 @@ class StoryCluster(Base):
 
 
 # ---------------------------------------------------------------------------
+# 10. users / 11. user_sessions  (dashboard accounts — never synced to Neon)
+# ---------------------------------------------------------------------------
+
+class User(Base):
+    """A dashboard account: email + password, Google, or both (linked by email)."""
+    __tablename__ = "users"
+
+    id: int = Column(BigInteger, primary_key=True, autoincrement=True)
+    email: str = Column(Text, nullable=False, unique=True, comment="Lower-cased")
+    name: str = Column(Text, nullable=True)
+    password_hash: str = Column(Text, nullable=True, comment="scrypt; NULL for Google-only accounts")
+    google_sub: str = Column(Text, nullable=True, unique=True, comment="Google account id")
+    created_at: datetime = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    last_login_at: datetime = Column(TIMESTAMP(timezone=True), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<User id={self.id} email={self.email!r}>"
+
+
+class UserSession(Base):
+    """An opaque bearer token (only its SHA-256 is stored) tied to a user."""
+    __tablename__ = "user_sessions"
+
+    token_hash: str = Column(Text, primary_key=True)
+    user_id: int = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at: datetime = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    expires_at: datetime = Column(TIMESTAMP(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_user_sessions_user_id", "user_id"),)
+
+
+# ---------------------------------------------------------------------------
+# 12. symbol_checks
+# ---------------------------------------------------------------------------
+
+class SymbolCheck(Base):
+    """
+    Whether a ticker is real, judged by the price stage. A symbol Yahoo has no data for
+    is hidden everywhere tickers are read from its first failed check ('pending'); after
+    two it is 'invalid' (usually an LLM-invented symbol such as NSE.NS or HCLT.NS) and
+    is no longer fetched until the weekly recheck. A pending symbol that later gets data
+    becomes 'valid' and reappears.
+    """
+    __tablename__ = "symbol_checks"
+
+    symbol: str = Column(Text, primary_key=True)
+    status: str = Column(Text, nullable=False, comment="valid | invalid | pending (failed once)")
+    fail_count: int = Column(Integer, nullable=False, default=0, server_default="0")
+    checked_at: datetime = Column(TIMESTAMP(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_symbol_checks_status", "status"),)
+
+
+# ---------------------------------------------------------------------------
+# 13. event_outcomes
+# ---------------------------------------------------------------------------
+
+class EventOutcome(Base):
+    """
+    What a stock did after a story, from stored daily closes (pipeline/prices/outcomes.py):
+    returns from the last close before the headline to the first close after it (day 0),
+    one session later and five sessions later, beside the benchmark's over the same days.
+    The history the priced-in meter compares new stories against. Returns are fractions.
+    """
+    __tablename__ = "event_outcomes"
+
+    article_id: int = Column(Integer, ForeignKey("articles.id", ondelete="CASCADE"), nullable=False)
+    ticker: str = Column(Text, nullable=False)
+    benchmark: str = Column(Text, nullable=False, comment="SPX (US) or NIFTY (India)")
+    event_type: str = Column(Text, nullable=True)
+    sentiment: str = Column(Text, nullable=True)
+    published_at: datetime = Column(TIMESTAMP(timezone=True), nullable=True)
+    base_date: date = Column(Date, nullable=False, comment="Last session that closed before the headline")
+    day0_date: date = Column(Date, nullable=False, comment="First session close after the headline")
+    ret_day0: float = Column(Numeric(10, 6), nullable=False)
+    ret_1d: float = Column(Numeric(10, 6), nullable=True)
+    ret_5d: float = Column(Numeric(10, 6), nullable=True)
+    bench_day0: float = Column(Numeric(10, 6), nullable=True)
+    bench_1d: float = Column(Numeric(10, 6), nullable=True)
+    bench_5d: float = Column(Numeric(10, 6), nullable=True)
+    computed_at: datetime = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        PrimaryKeyConstraint("article_id", "ticker"),
+        Index("ix_event_outcomes_group", "event_type", "sentiment"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Exported symbols
 # ---------------------------------------------------------------------------
 __all__ = [
-    "Base",
     "Article",
     "ArticleTicker",
+    "Base",
+    "EventOutcome",
     "Extraction",
-    "Ticker",
     "PriceDaily",
-    "ScrapeRun",
     "Report",
+    "ScrapeRun",
     "SectorDayFeature",
     "StoryCluster",
+    "SymbolCheck",
+    "Ticker",
+    "User",
+    "UserSession",
 ]

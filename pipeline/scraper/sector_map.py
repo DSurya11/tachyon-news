@@ -179,7 +179,6 @@ FINVIZ_TO_GICS: dict[str, str] = {
     "Closed-End Fund - Equity": "ETF",
     "Closed-End Fund - Foreign": "ETF",
     "Exchange Traded Fund Income": "ETF",
-    "Shell Companies": "Other",
     "Specialty Finance": "Financials",
     "Other": "Other",
 }

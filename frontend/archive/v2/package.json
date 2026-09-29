@@ -1,0 +1,1 @@
+{ "type": "module", "private": true, "description": "Marks js/*.js as ES modules for tooling (node --check). No dependencies, no build step." }

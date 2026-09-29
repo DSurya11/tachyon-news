@@ -14,7 +14,6 @@ Configuration (matches implementation plan):
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from enum import Enum, auto
@@ -33,7 +32,8 @@ class _State(Enum):
 
 class CircuitBreaker:
     """
-    Thread-safe (asyncio) circuit breaker for a single domain.
+    Circuit breaker for a single domain.  Used from a single asyncio event
+    loop, so no locking is needed (there are no awaits inside its methods).
 
     Usage:
         cb = CircuitBreaker("reuters.com")
@@ -52,7 +52,7 @@ class CircuitBreaker:
         self._state: _State = _State.CLOSED
         self._failures: int = 0
         self._opened_at: float = 0.0
-        self._lock = asyncio.Lock()
+        self._probe_in_flight: bool = False
 
     def allow_request(self) -> bool:
         """Return True if a request should be attempted."""
@@ -63,10 +63,14 @@ class CircuitBreaker:
             if time.monotonic() - self._opened_at >= OPEN_DURATION_S:
                 log.info("[CB] %s → HALF_OPEN (probe allowed)", self.domain)
                 self._state = _State.HALF_OPEN
+                self._probe_in_flight = True
                 return True
             return False
 
         # HALF_OPEN — only one probe at a time; subsequent callers are blocked
+        if self._probe_in_flight:
+            return False
+        self._probe_in_flight = True
         return True
 
     def record_success(self) -> None:
@@ -75,10 +79,12 @@ class CircuitBreaker:
             log.info("[CB] %s → CLOSED (probe succeeded)", self.domain)
         self._state = _State.CLOSED
         self._failures = 0
+        self._probe_in_flight = False
 
     def record_failure(self) -> None:
         """Call after a fetch failure."""
         self._failures += 1
+        self._probe_in_flight = False
         if self._state == _State.HALF_OPEN:
             log.warning("[CB] %s probe failed → re-OPEN", self.domain)
             self._state = _State.OPEN
@@ -101,7 +107,6 @@ class CircuitBreaker:
 
 class CircuitOpenError(Exception):
     """Raised when a request is blocked by an open circuit breaker."""
-    pass
 
 
 class CircuitBreakerRegistry:

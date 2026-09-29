@@ -1,0 +1,15 @@
+[Unit]
+Description=Stock-news API (FastAPI)
+After=network-online.target stocknews-omniroute.service
+OnFailure=stocknews-notify@%n.service
+
+[Service]
+WorkingDirectory=@RELEASE@
+ExecStart=@VENV@/bin/uvicorn backend.main:app --host 127.0.0.1 --port @BACKEND_PORT@
+Restart=on-failure
+# Stopping sends SIGTERM; exiting on it (code 143) is a normal stop, not a failure.
+SuccessExitStatus=143
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,14 @@
+# The production dashboard build (static files) from the deployed release.
+[Unit]
+Description=Stock-news dashboard
+OnFailure=stocknews-notify@%n.service
+
+[Service]
+ExecStart=@PYTHON@ -m http.server @FRONTEND_PORT@ --bind 127.0.0.1 --directory @RELEASE@/dashboard
+Restart=on-failure
+# Stopping sends SIGTERM; exiting on it (code 143) is a normal stop, not a failure.
+SuccessExitStatus=143
+RestartSec=5
+
+[Install]
+WantedBy=default.target

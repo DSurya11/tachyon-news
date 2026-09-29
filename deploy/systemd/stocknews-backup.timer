@@ -1,0 +1,11 @@
+# Daily, catching up after the laptop was off.
+[Unit]
+Description=Daily stock-news database backup
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

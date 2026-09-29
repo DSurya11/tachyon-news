@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Tachyon News — market news, verified</title>
+    <meta name="description" content="Market news read by AI and checked against the source. A daily brief with every claim cited, live quotes and a sector view." />
+    <meta name="theme-color" content="#0f0e0d" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <script>
+      // Apply the saved theme before first paint (no flash).
+      try {
+        if (localStorage.getItem('tsn.theme') !== 'light') document.documentElement.classList.add('dark');
+      } catch (e) { document.documentElement.classList.add('dark'); }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

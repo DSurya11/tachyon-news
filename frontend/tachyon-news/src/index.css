@@ -1,0 +1,296 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+@import "@fontsource-variable/newsreader";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    --font-heading: var(--font-sans);
+    --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'Geist Mono Variable', ui-monospace, SFMono-Regular, monospace;
+    --font-serif: 'Newsreader Variable', Georgia, serif;
+    --color-up: var(--up);
+    --color-down: var(--down);
+    --color-flat: var(--flat);
+    --color-signal: var(--signal);
+    --color-surface: var(--surface);
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-chart-5: var(--chart-5);
+    --color-chart-4: var(--chart-4);
+    --color-chart-3: var(--chart-3);
+    --color-chart-2: var(--chart-2);
+    --color-chart-1: var(--chart-1);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --radius-3xl: calc(var(--radius) * 2.2);
+    --radius-4xl: calc(var(--radius) * 2.6);
+    --animate-marquee: marquee var(--duration) infinite linear;
+    --animate-marquee-vertical: marquee-vertical var(--duration) linear infinite;
+  @keyframes marquee {
+  from {
+    transform: translateX(0);
+        }
+  to {
+    transform: translateX(calc(-100% - var(--gap)));
+        }
+    }
+  @keyframes marquee-vertical {
+  from {
+    transform: translateY(0);
+        }
+  to {
+    transform: translateY(calc(-100% - var(--gap)));
+        }
+    }
+  --animate-shiny-text: shiny-text 8s infinite
+;
+  @keyframes shiny-text {
+  0%, 90%, 100% {
+    background-position: calc(-100% - var(--shiny-width)) 0;}
+  30%, 60% {
+    background-position: calc(100% + var(--shiny-width)) 0;}}
+  --animate-shine: shine var(--duration) infinite linear;
+  @keyframes shine {
+  0% {
+    background-position: 0% 0%;}
+  50% {
+    background-position: 100% 100%;}
+  to {
+    background-position: 0% 0%;}}}
+
+:root {
+    /*
+      Light: a white page in a tinted frame. Content (page + cards) is one white paper
+      separated by crisp hairline rules — no stacked tones, no soft shadows. The frame
+      (sidebar, tape, inputs, control tracks) shares a single warm tint. Ink has a faint
+      cool cast. Colour stays reserved for data.
+    */
+    --background: oklch(0.993 0.0015 85);
+    --foreground: oklch(0.2 0.012 258);
+    --card: oklch(0.993 0.0015 85);
+    --card-foreground: oklch(0.2 0.012 258);
+    --surface: oklch(0.966 0.004 85);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.2 0.012 258);
+    --primary: oklch(0.2 0.012 258);
+    --primary-foreground: oklch(0.99 0.002 85);
+    --secondary: oklch(0.962 0.004 85);
+    --secondary-foreground: oklch(0.22 0.012 258);
+    --muted: oklch(0.955 0.004 85);
+    --muted-foreground: oklch(0.46 0.013 258);
+    --accent: oklch(0.962 0.004 85);
+    --accent-foreground: oklch(0.2 0.012 258);
+    --destructive: oklch(0.54 0.17 28);
+    --border: oklch(0.905 0.005 85);
+    --input: oklch(0.88 0.006 85);
+    --ring: oklch(0.45 0.04 250);
+    --up: oklch(0.52 0.115 158);
+    --down: oklch(0.545 0.165 28);
+    --flat: oklch(0.66 0.01 258);
+    --signal: oklch(0.6 0.13 62);
+    --beam: oklch(0.42 0.03 258);
+    --shadow-card: 0 0 #0000;
+    --shadow-raised: 0 1px 2px oklch(0.3 0.02 60 / 0.12), 0 0 0 1px oklch(0.3 0.02 60 / 0.07);
+    --chart-1: var(--up);
+    --chart-2: var(--flat);
+    --chart-3: var(--down);
+    --chart-4: oklch(0.42 0.013 258);
+    --chart-5: oklch(0.82 0.006 85);
+    --radius: 0.625rem;
+    --sidebar: oklch(0.97 0.0045 85);
+    --sidebar-foreground: oklch(0.2 0.012 258);
+    --sidebar-primary: oklch(0.2 0.012 258);
+    --sidebar-primary-foreground: oklch(0.99 0.002 85);
+    --sidebar-accent: oklch(0.993 0.0015 85);
+    --sidebar-accent-foreground: oklch(0.2 0.012 258);
+    --sidebar-border: oklch(0.9 0.005 85);
+    --sidebar-ring: oklch(0.45 0.04 250);
+}
+
+.dark {
+    --background: oklch(0.145 0.004 60);
+    --foreground: oklch(0.955 0.004 90);
+    --card: oklch(0.172 0.004 60);
+    --card-foreground: oklch(0.955 0.004 90);
+    --surface: oklch(0.16 0.004 60);
+    --popover: oklch(0.19 0.005 60);
+    --popover-foreground: oklch(0.955 0.004 90);
+    --primary: oklch(0.955 0.004 90);
+    --primary-foreground: oklch(0.17 0.004 60);
+    --secondary: oklch(0.21 0.005 60);
+    --secondary-foreground: oklch(0.955 0.004 90);
+    --muted: oklch(0.21 0.005 60);
+    --muted-foreground: oklch(0.66 0.008 75);
+    --accent: oklch(0.22 0.005 60);
+    --accent-foreground: oklch(0.955 0.004 90);
+    --destructive: oklch(0.68 0.19 25);
+    --border: oklch(1 0 0 / 8%);
+    --input: oklch(1 0 0 / 12%);
+    --ring: oklch(0.55 0.01 70);
+    --up: oklch(0.75 0.15 155);
+    --down: oklch(0.69 0.18 25);
+    --flat: oklch(0.62 0.01 75);
+    --signal: oklch(0.8 0.14 70);
+    --beam: oklch(0.93 0.01 90);
+    --shadow-card: 0 0 #0000;
+    --shadow-raised: inset 0 0 0 1px oklch(1 0 0 / 7%);
+    --chart-4: oklch(0.7 0.01 75);
+    --chart-5: oklch(0.35 0.006 60);
+    --sidebar: oklch(0.155 0.004 60);
+    --sidebar-foreground: oklch(0.955 0.004 90);
+    --sidebar-primary: oklch(0.955 0.004 90);
+    --sidebar-primary-foreground: oklch(0.17 0.004 60);
+    --sidebar-accent: oklch(0.21 0.005 60);
+    --sidebar-accent-foreground: oklch(0.955 0.004 90);
+    --sidebar-border: oklch(1 0 0 / 7%);
+    --sidebar-ring: oklch(0.55 0.01 70);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    }
+  /* Focus rings are for keyboards. A tap (or a menu handing focus back to its button after a tap)
+     must not leave one behind — iOS draws that default outline in system blue, whatever the theme. */
+  :focus:not(:focus-visible) { outline: none; }
+  :focus-visible { outline: 2px solid color-mix(in oklab, var(--ring) 60%, transparent); outline-offset: 2px; }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "ss01", "cv11";
+    }
+  ::selection { background: color-mix(in oklch, var(--foreground) 16%, transparent); }
+  html {
+    @apply font-sans;
+    }
+}
+@layer utilities {
+  .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .text-balance { text-wrap: balance; }
+  .scrollbar-thin { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+}
+
+/* Price ticks: a brief wash of colour when a value moves. */
+@keyframes tick-up { from { background-color: color-mix(in oklch, var(--up) 28%, transparent); } }
+@keyframes tick-down { from { background-color: color-mix(in oklch, var(--down) 28%, transparent); } }
+.tick-up { animation: tick-up 1.2s ease-out; border-radius: 4px; }
+.tick-down { animation: tick-down 1.2s ease-out; border-radius: 4px; }
+
+/* Live indicator: a ring that scales out and fades (transform + opacity only). */
+.live-dot { position: relative; }
+.live-dot::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: inherit; animation: live-ring 2s ease-out infinite; }
+@keyframes live-ring { from { transform: scale(1); opacity: 0.55; } 70%, to { transform: scale(3.2); opacity: 0; } }
+.animate-marquee, .animate-marquee-vertical { will-change: transform; }
+
+/*
+  Moving edge light. The bright arc is a rotating conic gradient masked to a 1px ring;
+  only `transform` animates, so it runs on the compositor (no per-frame JS or layout).
+*/
+.edge-light {
+  position: absolute; inset: 0; z-index: 1; padding: 1px; border-radius: inherit; overflow: hidden; pointer-events: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+.edge-light > i {
+  position: absolute; left: 50%; top: 50%; width: 250%; aspect-ratio: 1; will-change: transform;
+  background: conic-gradient(from 0deg, transparent 0deg 280deg,
+    color-mix(in oklch, var(--beam) 18%, transparent) 318deg, color-mix(in oklch, var(--beam) 85%, transparent) 352deg, transparent 360deg);
+  animation: edge-spin var(--edge-duration, 9s) linear infinite;
+}
+@keyframes edge-spin { from { transform: translate(-50%, -50%) rotate(0turn); } to { transform: translate(-50%, -50%) rotate(1turn); } }
+
+/* Pipeline links: a hairline with a short light sliding along it (transform only). */
+.pipe-link { position: absolute; height: 1.5px; margin-top: -0.75px; overflow: hidden; border-radius: 1px; background: var(--border); pointer-events: none; }
+.pipe-link > i {
+  position: absolute; inset: 0; width: 40%; will-change: transform;
+  background: linear-gradient(90deg, transparent, color-mix(in oklch, var(--beam) 90%, transparent), transparent);
+  animation: pipe-flow 2.8s cubic-bezier(0.45, 0, 0.2, 1) var(--pipe-delay, 0s) infinite both;
+}
+@keyframes pipe-flow { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+
+/*
+  Row hover: no fill change. The row's content eases right and its title gets an
+  ink underline drawn from the left. `.hover-row` on the row, `.hover-title` on its title.
+*/
+.hover-row > .hover-body { transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.hover-row:hover > .hover-body, .hover-row:focus-visible > .hover-body { transform: translateX(4px); }
+.hover-title {
+  background: linear-gradient(currentColor, currentColor) 0 100% / 0 1px no-repeat;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+  transition: background-size 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.hover-row:hover .hover-title, .hover-row:focus-visible .hover-title, .hover-row[aria-selected="true"] .hover-title { background-size: 100% 1px; }
+
+/* Selected thumb of a segmented control / active nav item: raised paper in light, a lit tile in dark. */
+.seg-thumb { background: var(--card); box-shadow: var(--shadow-raised); }
+.dark .seg-thumb { background: var(--accent); }
+
+/* A story that arrived while you were reading: a brief signal wash. */
+@keyframes row-fresh { from { background-color: color-mix(in oklch, var(--signal) 14%, transparent); } }
+.row-fresh { animation: row-fresh 2.4s ease-out; }
+
+/* Sign-in: the preview column scrolls slowly (transform only). */
+@keyframes signin-wire { from { transform: translateY(0); } to { transform: translateY(-50%); } }
+.signin-wire { animation: signin-wire 60s linear infinite; will-change: transform; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+
+/* Reading progress (components/app/ReadingProgress.tsx): a native scroll timeline where the
+   browser has one — exact, off the main thread, and it tracks the page as its length changes. */
+@keyframes reading-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@supports (animation-timeline: scroll()) {
+  .reading-progress { animation: reading-progress linear both; animation-timeline: scroll(root block); }
+}
+
+/* Inspector panels: a light glides once along the newest panel's top edge as it arrives
+   (components/app/Inspector.tsx). A small element moved by transform only, like .pipe-link. */
+.panel-arrive { position: absolute; inset: 0 0 auto; z-index: 1; height: 1.5px; overflow: hidden; pointer-events: none; }
+.panel-arrive > i {
+  position: absolute; inset: 0; width: 45%; will-change: transform;
+  background: linear-gradient(90deg, transparent, color-mix(in oklch, var(--beam) 95%, transparent), transparent);
+  animation: panel-arrive 1.1s cubic-bezier(0.45, 0, 0.2, 1) 0.25s both;
+}
+@keyframes panel-arrive { from { transform: translateX(-100%); opacity: 1; } 85% { opacity: 1; } to { transform: translateX(230%); opacity: 0; } }
+
+/* Price charts draw in from the left (components/app/PriceChart.tsx). Clip-path animation runs
+   in the browser's animation engine, so it stays smooth while the panel around it animates. */
+.chart-reveal { animation: chart-reveal 1.3s cubic-bezier(0.45, 0, 0.2, 1) 0.25s backwards; } /* no fill after: the tooltip must not be clipped */
+@keyframes chart-reveal { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@media (prefers-reduced-motion: reduce) { .chart-reveal { animation: none; } }
+
+/* Height of the sticky top bar, for things that stick just below it (two rows on phones). */
+:root { --topbar-h: 101px; }
+@media (width >= 40rem) { :root { --topbar-h: 3.5rem; } }

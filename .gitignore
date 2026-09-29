@@ -1,53 +1,46 @@
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 *.egg-info/
-*.egg
 dist/
 build/
-.eggs/
 venv/
 .venv/
-env/
-.env
-*.env.local
 
-# Test / coverage
+# Tooling
 .pytest_cache/
-.coverage
-htmlcov/
-coverage.xml
-.mypy_cache/
 .ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
 
-# Node
-node_modules/
-.next/
-out/
-.turbo/
+# Runtime state
+logs/
+*.log
+.run/
+*.pid
 
-# Docker volumes
-docker/data/
+# Debug artefacts
+*.png
+!frontend/**/*.png
+scratch/
 
-# IDE
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Editors / OS
 .idea/
 .vscode/
 *.swp
-*.swo
 .DS_Store
-Thumbs.db
 
-# Logs
-*.log
-logs/
+# Node / frontend builds
+node_modules/
+.next/
 
 # Playwright
 playwright/.auth/
 playwright-report/
-
-# Secrets (never commit)
-.env
-.env.*
-!.env.example

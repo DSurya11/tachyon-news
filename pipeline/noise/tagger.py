@@ -33,10 +33,11 @@ _PATTERNS: list[tuple[str, list[re.Pattern]]] = [
                 r"file[sd]? a lawsuit on behalf of|"
                 r"loss[- ]recovery|investor alert|shareholder alert|"
                 r"NOTICE TO INVESTORS|"
-                r"(Robbins|Pomerantz|Rosen|Kessler|Bernstein Liebhard|"
-                r"Glancy|Faruqi|Wolf Haldenstein|Block &amp; Leviton|"
-                r"Schall|Lifshitz|Levi &amp; Korsinsky|"
-                r"Bronstein Gewirtz|Scott\+Scott)\s+&?\s*(LLP|Law))\b",
+                r"(Robbins Geller|Robbins LLP|Pomerantz|Rosen Law|Kessler Topaz|Bernstein Liebhard|"
+                r"Glancy Prongay|Faruqi|Wolf Haldenstein|Block & Leviton|"
+                r"Schall Law|Lifshitz|Levi & Korsinsky|"
+                r"Bronstein,? Gewirtz|Scott\+Scott|Halper Sadeh|Kahn Swick|Portnoy Law|"
+                r"Gainey McKenna|Johnson Fistel|Bragar Eagel|Brodsky & Smith|Ademi))",
                 re.IGNORECASE,
             ),
             re.compile(
@@ -122,18 +123,11 @@ def tag_article(headline: str, body: str | None = None) -> list[str]:
         body:      Optional article body text (checked if headline alone
                    doesn't trigger, to reduce false positives).
     """
-    text = headline.lower()
-    if body:
-        # Check headline first; extend to body only for patterns that need it
-        full_text = (headline + " " + body).lower()
-    else:
-        full_text = text
-
     tags: list[str] = []
     for tag_name, patterns in _PATTERNS:
         for pattern in patterns:
-            # Check headline first (fast path), then full text
-            if pattern.search(headline) or (body and pattern.search(full_text)):
+            # Headline first (fast path), then body when provided
+            if pattern.search(headline) or (body and pattern.search(body)):
                 tags.append(tag_name)
                 break  # one match per group is enough
 

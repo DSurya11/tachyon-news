@@ -1,0 +1,39 @@
+# Render Blueprint for the public API and dashboard (the pipeline itself runs on the laptop).
+services:
+  - type: web
+    name: stock-news-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements-backend.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: API_DB_URL          # Neon connection string for a READ-ONLY role
+        sync: false
+      - key: AUTH_DB_URL         # Neon role that may write only users / user_sessions
+        sync: false
+      - key: GOOGLE_CLIENT_ID    # optional: enables "Continue with Google"
+        sync: false
+      - key: FINNHUB_API_KEY
+        sync: false
+      - key: CORS_ORIGINS        # the dashboard's origin, e.g. https://stock-news-dashboard.onrender.com
+        sync: false
+
+  # React dashboard (Vite build). HashRouter, so no SPA rewrite rule is needed.
+  - type: web
+    name: stock-news-dashboard
+    runtime: static
+    rootDir: frontend/tachyon-news
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    headers:
+      - path: /assets/*          # content-hashed filenames
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+    envVars:
+      - key: NODE_VERSION        # Vite 8 needs Node 20.19+ / 22.12+
+        value: "22"
+      - key: VITE_API_URL        # the API's public URL, read at build time
+        sync: false

@@ -1,0 +1,80 @@
+/* Design tokens — one place for colour, type, spacing and motion. */
+:root {
+  --font-ui: 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  --r-sm: 4px;
+  --r-md: 8px;
+  --r-lg: 12px;
+
+  --rail-w: 244px;
+  --inspector-w: 440px;
+  --topbar-h: 56px;
+
+  --ease: cubic-bezier(.2, .7, .2, 1);
+  --t-fast: 120ms;
+  --t-med: 220ms;
+}
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #07090c;
+  --bg-1: #0b0e12;
+  --bg-2: #10141a;
+  --bg-3: #161b23;
+  --line: #1b212b;
+  --line-2: #273041;
+  --text: #e7ebf0;
+  --text-2: #a3adbb;
+  --text-3: #647083;
+
+  --accent: #00e59b;
+  --accent-ink: #032419;
+  --bull: #22d39a;
+  --bear: #ff5470;
+  --neutral: #8d98a9;
+  --warn: #ffb547;
+  --info: #5aa9ff;
+  --violet: #a78bfa;
+
+  --bull-bg: rgba(34, 211, 154, .10);
+  --bear-bg: rgba(255, 84, 112, .10);
+  --info-bg: rgba(90, 169, 255, .10);
+  --warn-bg: rgba(255, 181, 71, .10);
+
+  --glass: rgba(11, 14, 18, .82);
+  --shadow: 0 12px 40px rgba(0, 0, 0, .55), 0 0 0 1px var(--line-2);
+  --grid: rgba(255, 255, 255, .025);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f6f9;
+  --bg-1: #ffffff;
+  --bg-2: #f7f9fb;
+  --bg-3: #eef2f6;
+  --line: #e2e7ee;
+  --line-2: #cfd7e2;
+  --text: #0e131a;
+  --text-2: #4a5566;
+  --text-3: #8591a3;
+
+  --accent: #00a370;
+  --accent-ink: #ffffff;
+  --bull: #0c9a67;
+  --bear: #d9224a;
+  --neutral: #6b7686;
+  --warn: #b86e00;
+  --info: #1d64e8;
+  --violet: #7c4ddb;
+
+  --bull-bg: rgba(12, 154, 103, .09);
+  --bear-bg: rgba(217, 34, 74, .08);
+  --info-bg: rgba(29, 100, 232, .08);
+  --warn-bg: rgba(184, 110, 0, .09);
+
+  --glass: rgba(255, 255, 255, .86);
+  --shadow: 0 12px 40px rgba(15, 23, 42, .14), 0 0 0 1px var(--line-2);
+  --grid: rgba(15, 23, 42, .035);
+}

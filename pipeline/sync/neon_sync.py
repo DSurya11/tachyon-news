@@ -1,99 +1,127 @@
+"""
+pipeline/sync/neon_sync.py
+──────────────────────────
+Upserts the public-safe subset of the local database into Neon.
+
+Incremental by default: only rows touched within NEON_SYNC_LOOKBACK_DAYS
+are re-sent (the old version re-uploaded every table in full every hour).
+Private columns never leave the laptop:
+  articles.body, articles.title_hash, extractions.evidence, extractions.key_facts
+
+CLI:
+    python -m pipeline.sync.neon_sync          # incremental
+    python -m pipeline.sync.neon_sync --full   # everything
+"""
+from __future__ import annotations
+
+import argparse
 import logging
-from sqlalchemy import select
+import sys
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.sql import Select
 
+from pipeline.config import settings
+from pipeline.db import neon
 from pipeline.db.local import LocalSession
-from pipeline.db.neon import NeonSession
-from pipeline.db.models import (
-    Article,
-    ArticleTicker,
-    Extraction,
-    Ticker,
-    PriceDaily,
-    ScrapeRun,
-    Report,
-)
+from pipeline.db.models import Article, ArticleTicker, Extraction, PriceDaily, Report, ScrapeRun, SymbolCheck, Ticker
+from pipeline.db.schema import ensure_schema
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
-def sync_table(local_session, neon_session, model, pk_col, exclude_cols=None):
-    """Upserts all rows from local table to Neon table."""
-    exclude_cols = exclude_cols or []
-    
-    rows = local_session.execute(select(model)).scalars().all()
-    if not rows:
-        return 0
+PRIVATE_COLUMNS = {
+    Article: {"body", "title_hash"},
+    Extraction: {"evidence", "key_facts"},
+}
+PRICE_WINDOW_DAYS = 60
 
-    dicts = []
-    for row in rows:
-        row_dict = {c.name: getattr(row, c.name) for c in model.__table__.columns if c.name not in exclude_cols}
-        dicts.append(row_dict)
 
-    stmt = insert(model).values(dicts)
-    
-    # Build update dict for ON CONFLICT DO UPDATE
-    set_dict = {c.name: getattr(stmt.excluded, c.name) 
-                for c in model.__table__.columns 
-                if c.name not in exclude_cols and c.name != pk_col}
+def _columns(model) -> list:
+    excluded = PRIVATE_COLUMNS.get(model, set())
+    return [c for c in model.__table__.columns if c.name not in excluded]
 
-    if set_dict:
-        stmt = stmt.on_conflict_do_update(
-            index_elements=[pk_col] if isinstance(pk_col, str) else pk_col,
-            set_=set_dict
+
+def _upsert(neon_session, model, rows: list[dict]) -> None:
+    pk = [c.name for c in model.__table__.primary_key.columns]
+    for i in range(0, len(rows), settings.neon_sync_chunk_size):
+        stmt = insert(model).values(rows[i : i + settings.neon_sync_chunk_size])
+        updates = {c.name: stmt.excluded[c.name] for c in _columns(model) if c.name not in pk}
+        stmt = (
+            stmt.on_conflict_do_update(index_elements=pk, set_=updates)
+            if updates
+            else stmt.on_conflict_do_nothing(index_elements=pk)
         )
-    else:
-        stmt = stmt.on_conflict_do_nothing(
-            index_elements=[pk_col] if isinstance(pk_col, str) else pk_col
-        )
-        
-    neon_session.execute(stmt)
-    return len(dicts)
+        neon_session.execute(stmt)
 
-def sync_to_neon():
-    """Sync all local data to Neon DB."""
-    if not NeonSession:
-        logger.warning("NeonSession is not available. Skipping sync.")
-        return
 
-    try:
-        with LocalSession() as local_session, NeonSession() as neon_session:
-            # 1. Tickers
-            c = sync_table(local_session, neon_session, Ticker, "symbol")
-            logger.info(f"Synced {c} rows to Ticker")
-            
-            # 2. Articles (Exclude body, title_hash to save space)
-            c = sync_table(local_session, neon_session, Article, "id", exclude_cols=["body", "title_hash"])
-            logger.info(f"Synced {c} rows to Article")
-            
-            # 3. ArticleTickers (Composite PK)
-            c = sync_table(local_session, neon_session, ArticleTicker, ["article_id", "ticker"])
-            logger.info(f"Synced {c} rows to ArticleTicker")
-            
-            # 4. Extractions (Exclude evidence, key_facts to save space as per plan)
-            c = sync_table(local_session, neon_session, Extraction, "id", exclude_cols=["evidence", "key_facts"])
-            logger.info(f"Synced {c} rows to Extraction")
-            
-            # 5. Prices
-            c = sync_table(local_session, neon_session, PriceDaily, ["ticker", "date"])
-            logger.info(f"Synced {c} rows to PriceDaily")
-            
-            # 6. ScrapeRuns
-            c = sync_table(local_session, neon_session, ScrapeRun, "id")
-            logger.info(f"Synced {c} rows to ScrapeRun")
-            
-            # 7. Reports
-            c = sync_table(local_session, neon_session, Report, "id")
-            logger.info(f"Synced {c} rows to Report")
-            
-            neon_session.commit()
-            logger.info("Neon sync complete.")
-            
-    except OperationalError as e:
-        logger.warning(f"Could not connect to Neon DB (is NEON_DB_URL correct?): {e}")
-    except Exception as e:
-        logger.error(f"Error during Neon sync: {e}")
+def _sync(local_session, neon_session, model, query: Select) -> int:
+    cols = _columns(model)
+    rows = [dict(zip([c.name for c in cols], r, strict=True)) for r in local_session.execute(query.with_only_columns(*cols))]
+    if rows:
+        _upsert(neon_session, model, rows)
+    log.info("Neon sync: %-15s %d rows", model.__tablename__, len(rows))
+    return len(rows)
+
+
+def _queries(full: bool) -> list[tuple[type, Select]]:
+    cutoff = datetime.now(UTC) - timedelta(days=settings.neon_sync_lookback_days)
+    recent_articles = or_(Article.last_seen_at >= cutoff, Article.first_seen_at >= cutoff)
+
+    def maybe(query: Select, *conds) -> Select:
+        return query if full else query.where(*conds)
+
+    return [
+        (Ticker, maybe(select(Ticker), Ticker.last_seen_at >= cutoff)),
+        (Article, maybe(select(Article), recent_articles)),
+        (
+            ArticleTicker,
+            select(ArticleTicker)
+            if full
+            else select(ArticleTicker).join(Article, Article.id == ArticleTicker.article_id).where(recent_articles),
+        ),
+        (
+            Extraction,
+            select(Extraction)
+            if full
+            else select(Extraction)
+            .join(Article, Article.id == Extraction.article_id)
+            .where(or_(Extraction.created_at >= cutoff, recent_articles)),
+        ),
+        (PriceDaily, maybe(select(PriceDaily), PriceDaily.date >= datetime.now(UTC).date() - timedelta(days=PRICE_WINDOW_DAYS))),
+        (ScrapeRun, maybe(select(ScrapeRun), ScrapeRun.started_at >= cutoff)),
+        (Report, maybe(select(Report), Report.created_at >= cutoff)),
+        (SymbolCheck, maybe(select(SymbolCheck), SymbolCheck.checked_at >= cutoff)),
+    ]
+
+
+def sync_to_neon(full: bool = False) -> dict[str, int] | None:
+    """Sync local → Neon. Returns row counts, or None when Neon is not configured."""
+    if neon.neon_engine is None or neon.NeonSession is None:
+        log.info("NEON_DB_URL not configured — skipping Neon sync.")
+        return None
+
+    ensure_schema(neon.neon_engine)
+    counts: dict[str, int] = {}
+    with LocalSession() as local_session, neon.NeonSession() as neon_session:
+        for model, query in _queries(full):
+            counts[model.__tablename__] = _sync(local_session, neon_session, model, query)
+        neon_session.commit()
+    log.info("Neon sync complete (%s): %d rows", "full" if full else "incremental", sum(counts.values()))
+    return counts
+
+
+def main(argv: list[str] | None = None) -> int:
+    from pipeline.logging_setup import setup_logging
+
+    setup_logging(None)
+    parser = argparse.ArgumentParser(description="Sync the public dataset to Neon")
+    parser.add_argument("--full", action="store_true", help="Sync every row, not just recent ones")
+    args = parser.parse_args(argv)
+    sync_to_neon(full=args.full)
+    return 0
+
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s — %(message)s")
-    sync_to_neon()
+    sys.exit(main())

@@ -1,0 +1,7 @@
+# Desktop notification when a stock-news unit fails (OnFailure=).
+[Unit]
+Description=Notify that %i failed
+
+[Service]
+Type=oneshot
+ExecStart=-/usr/bin/notify-send --app-name=stock-news -u critical "Stock-news: %i failed" "journalctl --user -u %i -e"

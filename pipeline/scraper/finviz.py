@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from playwright.async_api import async_playwright, Page, TimeoutError as PWTimeout
+from playwright.async_api import Page, async_playwright
+from playwright.async_api import TimeoutError as PWTimeout
+from sqlalchemy import func
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from pipeline.config import settings
 from pipeline.db.local import LocalSession
 from pipeline.db.models import Article, ArticleTicker, ScrapeRun, Ticker
 from pipeline.noise.tagger import tag_article
@@ -31,6 +33,7 @@ log = logging.getLogger(__name__)
 
 FINVIZ_URL = "https://finviz.com/news?v=3"
 POLITE_DELAY_S = 2  # seconds between navigations
+NEWS_ROW_SELECTOR = "table.styled-table-new tr.news_table-row"
 
 
 # ---------------------------------------------------------------------------
@@ -47,12 +50,9 @@ def _upsert_scrape_run(session, started_at: datetime) -> ScrapeRun:
 
 def _upsert_tickers(session, articles: list[ParsedArticle]) -> None:
     """Insert or update ticker metadata rows using ON CONFLICT DO UPDATE."""
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
-    from pipeline.db.models import Ticker
-
     # Deduplicate: last-write-wins per symbol across all articles
     ticker_map: dict[str, dict] = {}
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for art in articles:
         for td in art.tickers:
             existing = ticker_map.get(td.symbol, {})
@@ -73,10 +73,11 @@ def _upsert_tickers(session, articles: list[ParsedArticle]) -> None:
         index_elements=["symbol"],
         set_={
             "last_seen_at": stmt.excluded.last_seen_at,
-            "company_name": stmt.excluded.company_name,
-            "finviz_industry": stmt.excluded.finviz_industry,
-            "sector": stmt.excluded.sector,
-            "country": stmt.excluded.country,
+            # Never overwrite known metadata with NULL from a sparse row
+            "company_name": func.coalesce(stmt.excluded.company_name, Ticker.company_name),
+            "finviz_industry": func.coalesce(stmt.excluded.finviz_industry, Ticker.finviz_industry),
+            "sector": func.coalesce(stmt.excluded.sector, Ticker.sector),
+            "country": func.coalesce(stmt.excluded.country, Ticker.country),
         },
     )
     session.execute(stmt)
@@ -96,8 +97,6 @@ def _upsert_articles(
     duplicate-key errors when the same canonical URL appears multiple
     times in one scrape batch or was already in the DB.
     """
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
-
     items_new = 0
     items_updated = 0
 
@@ -108,6 +107,7 @@ def _upsert_articles(
         # ── Article upsert ───────────────────────────────────────────────
         art_stmt = pg_insert(Article).values(
             canonical_url=art.canonical,
+            url=art.raw_url,
             headline=art.headline,
             title_hash=art.hash,
             source_name=art.source_name,
@@ -125,25 +125,21 @@ def _upsert_articles(
             set_={
                 "last_seen_at": scrape_time,
                 "seen_count": Article.seen_count + 1,
-                # Merge noise tags (array union via Postgres ||)
-                # We handle tag merging in Python below for simplicity
+                # Backfill the original URL for rows scraped before it was stored
+                "url": func.coalesce(Article.url, art_stmt.excluded.url),
             },
         ).returning(Article.id, Article.seen_count)
 
-        result = session.execute(art_stmt)
-        row = result.fetchone()
-        article_id, seen_count = row[0], row[1]
+        article_id, seen_count = session.execute(art_stmt).one()
 
         if seen_count == 1:
             items_new += 1
         else:
             items_updated += 1
-            # Merge noise tags for existing articles — fetch and update
             if noise_tags:
                 existing = session.get(Article, article_id)
                 if existing:
-                    merged = list(set(existing.noise_tags or []) | set(noise_tags))
-                    existing.noise_tags = merged
+                    existing.noise_tags = sorted(set(existing.noise_tags or []) | set(noise_tags))
 
         # ── ArticleTicker upsert ─────────────────────────────────────────
         for td in art.tickers:
@@ -184,27 +180,21 @@ async def _fetch_page_html(url: str) -> str:
         page: Page = await context.new_page()
         log.info("Navigating to %s", url)
 
+        # Finviz never reaches "networkidle" (ads, live quotes), so wait for the
+        # DOM and then for the news table itself.
+        await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         try:
-            await page.goto(url, wait_until="networkidle", timeout=60_000)
-        except PWTimeout:
-            log.warning("networkidle timed out — falling back to domcontentloaded")
-            await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-
-        # Wait for the news table to appear
-        try:
-            await page.wait_for_selector(
-                "table.styled-table-new tr.news_table-row",
-                timeout=20_000,
-            )
+            await page.wait_for_selector(NEWS_ROW_SELECTOR, timeout=30_000)
         except PWTimeout:
             log.warning("News rows selector not found within timeout — proceeding anyway")
 
         # Polite delay before any follow-up navigations
         await asyncio.sleep(POLITE_DELAY_S)
 
-        html = await page.content()
-        await browser.close()
-        return html
+        try:
+            return await page.content()
+        finally:
+            await browser.close()
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +206,7 @@ async def run_scraper() -> ScrapeRun:
     Full scrape: fetch → parse → noise-tag → upsert.
     Returns the completed ScrapeRun ORM object.
     """
-    scrape_time = datetime.now(timezone.utc)
+    scrape_time = datetime.now(UTC)
 
     with LocalSession() as session:
         run = _upsert_scrape_run(session, scrape_time)
@@ -228,16 +218,14 @@ async def run_scraper() -> ScrapeRun:
         articles = parse_finviz_html(html, scrape_time)
 
         # Determine oldest article for coverage stats
-        oldest_ts = None
-        oldest_age_str = ""
-        for art in articles:
-            if art.published_at is not None:
-                if oldest_ts is None or art.published_at < oldest_ts:
-                    oldest_ts = art.published_at
+        oldest_ts = min((a.published_at for a in articles if a.published_at), default=None)
 
         coverage_hours = None
         if oldest_ts is not None:
             coverage_hours = (scrape_time - oldest_ts).total_seconds() / 3600
+
+        if not articles:
+            raise RuntimeError("Finviz page parsed to 0 articles — selectors may have changed")
 
         with LocalSession() as session:
             run = session.get(ScrapeRun, run_id)
@@ -246,7 +234,7 @@ async def run_scraper() -> ScrapeRun:
             items_new, items_updated = _upsert_articles(session, articles, scrape_time)
 
             # Close the scrape run
-            run.finished_at = datetime.now(timezone.utc)
+            run.finished_at = datetime.now(UTC)
             run.items_found = len(articles)
             run.items_new = items_new
             run.items_updated = items_updated
@@ -263,10 +251,10 @@ async def run_scraper() -> ScrapeRun:
         return run
 
     except Exception as exc:
-        log.error("Scraper failed: %s", exc, exc_info=True)
+        log.error("Scraper failed: %s", exc)  # traceback is logged by the orchestrator
         with LocalSession() as session:
             run = session.get(ScrapeRun, run_id)
-            run.finished_at = datetime.now(timezone.utc)
+            run.finished_at = datetime.now(UTC)
             run.status = "failed"
             run.error_count = 1
             session.commit()

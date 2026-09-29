@@ -1,0 +1,9 @@
+[Unit]
+Description=Stock-news database backup
+OnFailure=stocknews-notify@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=@RELEASE@
+ExecStart=@PYTHON@ -m pipeline.ops.backup
+Nice=10

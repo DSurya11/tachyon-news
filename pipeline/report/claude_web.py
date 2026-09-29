@@ -1,168 +1,233 @@
-import logging
-import re
-import time
-from datetime import date
-from typing import Optional
+"""
+pipeline/report/claude_web.py
+─────────────────────────────
+Drives Claude.ai in a persistent Playwright browser profile.
 
+One-time setup (opens a window; log in, then it closes by itself):
+    make claude-login
+
+The profile lives in CHROME_PROFILE_DIR and must be dedicated to this tool:
+pointing it at your everyday Chrome profile fails whenever Chrome is open
+("profile already in use") and Chromium cannot decrypt Chrome's cookies.
+
+Run it headed (CLAUDE_HEADLESS=false, the default): Claude.ai sits behind
+Cloudflare, whose bot check ("Just a moment...") never clears for a headless
+browser even with a valid login.
+
+This is best-effort UI automation — Claude.ai's DOM can change without
+notice.  The report service falls back to other providers when it fails.
+
+Unattended runs (no terminal: the scheduled job) never wait for a manual login.
+When the session has expired, the first such run records it
+(LOG_DIR/.claude_login_required) and later runs skip this provider straight
+away, instead of opening a browser window every hour, until `make claude-login`
+succeeds.
+"""
+from __future__ import annotations
+
+import logging
+import sys
+import time
+from contextlib import contextmanager
+from pathlib import Path
+
+from playwright.sync_api import BrowserContext, Page, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-from playwright.sync_api import sync_playwright
 
 from pipeline.config import settings
-from pipeline.db.local import LocalSession
-from pipeline.db.models import Report
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
+
+EDITOR_SELECTOR = 'div[contenteditable="true"]'
+RESPONSE_SELECTOR = "div.standard-markdown"
+SEND_BUTTON_SELECTOR = 'button[aria-label="Send message"], button[aria-label="Send Message"]'
+POLL_INTERVAL_MS = 2000
+STABLE_POLLS_REQUIRED = 3
+LOGIN_TIMEOUT_MS = 5 * 60 * 1000
 
 
-def generate_report(trading_day: date, prompt: str, article_ids: list[int]) -> Optional[str]:
-    """
-    Automates claude.ai using Playwright with a persistent Chrome profile.
-    Puts the prompt in a new chat, waits for the generation to stabilize,
-    and returns the resulting text.
-    On success, stores the report in the `reports` table.
-    On failure, logs a warning and returns None.
-    """
-    logger.info(f"Starting Claude web automation for {trading_day} (prompt len: {len(prompt)})")
+class ClaudeWebError(RuntimeError):
+    pass
 
-    result_text = None
-    
-    try:
-        with sync_playwright() as p:
-            # We use launch_persistent_context to share cookies with the user's logged-in Chrome
-            context = p.chromium.launch_persistent_context(
-                user_data_dir=settings.chrome_profile_dir,
-                headless=False,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox"
-                ]
+
+def _login_marker() -> Path:
+    return Path(settings.log_dir) / ".claude_login_required"
+
+
+def login_required() -> bool:
+    """True after an unattended run found the Claude.ai session logged out."""
+    return _login_marker().exists()
+
+
+def _set_login_required(required: bool) -> None:
+    marker = _login_marker()
+    if required:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+    else:
+        marker.unlink(missing_ok=True)
+
+
+def _interactive() -> bool:
+    """Someone is at a terminal who could log in (not the scheduled job)."""
+    return not settings.claude_headless and sys.stdin.isatty()
+
+
+@contextmanager
+def _browser(headless: bool):
+    profile = Path(settings.chrome_profile_dir).expanduser()
+    profile.mkdir(parents=True, exist_ok=True)
+    with sync_playwright() as pw:
+        try:
+            context: BrowserContext = pw.chromium.launch_persistent_context(
+                user_data_dir=str(profile),
+                headless=headless,
+                args=["--disable-blink-features=AutomationControlled"],
+                viewport={"width": 1280, "height": 900},
             )
-            
-            page = context.new_page()
-            
-            # 1. Navigate to Claude
-            logger.info("Navigating to https://claude.ai/new")
-            page.goto("https://claude.ai/new", timeout=60000, wait_until="domcontentloaded")
-            
-            # 2. Check for login / text area
-            # The chat input area is usually a Prosemirror contenteditable or a generic input
-            # Let's wait for either the input field or the Google login button.
-            try:
-                # Wait up to 10s for the editor to appear
-                page.wait_for_selector('div[contenteditable="true"]', timeout=10000)
-                logger.info("Found chat input field.")
-            except PlaywrightTimeoutError:
-                logger.info("Chat input not found immediately. Checking for 'Continue with Google'...")
-                # Attempt to click Continue with Google if present
-                google_btn = page.get_by_text("Continue with Google")
-                if google_btn.is_visible(timeout=5000):
-                    logger.info("Clicking 'Continue with Google'. If a popup appears or you need to select an account, PLEASE DO SO MANUALLY IN THE BROWSER NOW. Waiting up to 2 minutes...")
-                    google_btn.click()
-                    # Wait for redirect and reload
-                    page.wait_for_selector('div[contenteditable="true"]', timeout=120000)
-                else:
-                    logger.warning("Could not find chat input or Google login button. Giving up.")
-                    context.close()
-                    return None
-
-            # 3. Paste the prompt
-            logger.info("Typing prompt...")
-            editor = page.locator('div[contenteditable="true"]').first
-            editor.fill(prompt)
-            
-            # Wait a beat for the submit button to become active
-            page.wait_for_timeout(1000)
-            
-            # 4. Submit
-            logger.info("Submitting prompt...")
-            # The submit button is typically the only button inside the input container or we can just press Enter if we haven't typed newlines.
-            # But since prompt has newlines, we should click the Send button.
-            # Usually it has an aria-label="Send Message" or is a `<button>` next to the input.
-            send_button = page.locator('button[aria-label="Send Message"]')
-            if send_button.count() > 0:
-                send_button.first.click()
-            else:
-                # Fallback: find the SVG icon for send or just the last button in the chat bar
-                editor.press("Meta+Enter")  # Mac shortcut to send multiline
-                editor.press("Control+Enter") # Windows/Linux shortcut
-            
-            # 5. Poll for response stabilization
-            logger.info("Waiting for response to stabilize...")
-            
-            # The responses are typically in a container. Claude's responses are inside `div.font-claude-message` or similar.
-            # We'll just grab the text of the LAST message block in the DOM.
-            start_time = time.time()
-            max_wait = 300  # 5 minutes max
-            stable_count = 0
-            last_text = ""
-            
-            while True:
-                if time.time() - start_time > max_wait:
-                    logger.warning("Timed out waiting for Claude response (5 mins).")
-                    break
-                    
-                page.wait_for_timeout(2000)
-                
-                # We need to find the AI's response blocks. Usually they are the only divs with large amounts of prose.
-                # A robust way is to select all message contents and take the last one.
-                # Claude DOM: `.font-user-message` and `.font-claude-message`.
-                # Let's just find the last block of text that looks like a markdown response.
-                # Or just grab all text and see if it stabilizes.
-                
-                # A good selector for Claude's message body is `.grid-cols-1 > div` or similar.
-                # Let's try grabbing the raw text content of the `.font-claude-message` classes.
-                messages = page.locator('.font-claude-message')
-                if messages.count() > 0:
-                    current_text = messages.last.inner_text()
-                else:
-                    # Fallback: grab the last `p` tag's parent container or something similar
-                    # It might be `div[data-is-streaming]` but that's risky.
-                    # We can use `page.evaluate` to get the last message.
-                    current_text = page.evaluate('''() => {
-                        const msgs = document.querySelectorAll('.font-claude-message, .break-words');
-                        return msgs.length > 0 ? msgs[msgs.length - 1].innerText : "";
-                    }''')
-                
-                if not current_text or len(current_text) < 50:
-                    # Still generating initial tokens
-                    continue
-                    
-                if current_text == last_text:
-                    stable_count += 1
-                else:
-                    stable_count = 0
-                    last_text = current_text
-                    
-                if stable_count >= 3:
-                    # Unchanged for 3 iterations (6 seconds) = done
-                    logger.info(f"Response stabilized at {len(current_text)} chars.")
-                    result_text = current_text
-                    break
-                    
+        except Exception as exc:
+            if "already in use" in str(exc) or "ProcessSingleton" in str(exc):
+                raise ClaudeWebError(f"browser profile {profile} is in use by another browser") from exc
+            raise
+        try:
+            yield context
+        finally:
             context.close()
-            
-    except Exception as e:
-        logger.error(f"Playwright automation failed: {e}")
-        return None
 
-    if not result_text:
-        return None
 
-    # 6. Store in DB
-    logger.info("Saving report to database.")
-    with LocalSession() as session:
-        # Upsert just in case we re-run
-        existing = session.query(Report).filter_by(trading_day=trading_day).first()
-        if existing:
-            existing.content = result_text
-            existing.article_ids = article_ids
+def _new_chat_page(context: BrowserContext) -> Page:
+    page = context.pages[0] if context.pages else context.new_page()
+    page.goto(f"{settings.claude_url.rstrip('/')}/new", timeout=60_000, wait_until="domcontentloaded")
+    return page
+
+
+def _try_google_login(context: BrowserContext, page: Page) -> None:
+    """Best-effort 'Continue with Google' using CLAUDE_GOOGLE_ACCOUNT."""
+    button = page.get_by_text("Continue with Google")
+    if not settings.claude_google_account or not button.is_visible(timeout=5000):
+        return
+    try:
+        with context.expect_page(timeout=10_000) as popup_info:
+            button.click()
+        popup = popup_info.value
+        account = popup.locator(f'div[data-identifier="{settings.claude_google_account}"]')
+        account.wait_for(timeout=10_000)
+        account.click()
+        cont = popup.locator('span:has-text("Continue")')
+        try:
+            cont.first.wait_for(state="visible", timeout=5000)
+            cont.first.click()
+        except PlaywrightTimeoutError:
+            pass
+        log.info("Selected Google account %s", settings.claude_google_account)
+    except Exception as exc:  # noqa: BLE001 — purely best-effort
+        log.warning("Automatic Google login failed: %s", exc)
+
+
+def _wait_for_editor(context: BrowserContext, page: Page, interactive: bool) -> None:
+    try:
+        page.wait_for_selector(EDITOR_SELECTOR, timeout=15_000)
+        return
+    except PlaywrightTimeoutError:
+        pass
+    _try_google_login(context, page)
+    timeout = LOGIN_TIMEOUT_MS if interactive else 60_000
+    try:
+        page.wait_for_selector(EDITOR_SELECTOR, timeout=timeout)
+    except PlaywrightTimeoutError as exc:
+        if _is_bot_check(page):
+            hint = " — headless browsers are blocked; set CLAUDE_HEADLESS=false" if settings.claude_headless else ""
+            raise ClaudeWebError(f"Claude.ai's Cloudflare bot check did not clear{hint}") from exc
+        _set_login_required(True)
+        raise ClaudeWebError("not logged in to Claude.ai — run `make claude-login` once") from exc
+
+
+def _is_bot_check(page: Page) -> bool:
+    """Cloudflare's interstitial ("Just a moment...") rather than Claude.ai itself."""
+    try:
+        return "just a moment" in page.title().lower() or page.locator("#challenge-running, #cf-challenge-running").count() > 0
+    except Exception:  # noqa: BLE001 — page navigating
+        return False
+
+
+def _read_last_response(page: Page) -> str:
+    try:
+        messages = page.locator(RESPONSE_SELECTOR)
+        return messages.last.inner_text() if messages.count() else ""
+    except Exception:  # noqa: BLE001 — navigation from /new to /chat/<id> mid-read
+        return ""
+
+
+def _last_response_markdown(page: Page, fallback: str) -> str:
+    try:
+        import markdownify
+
+        html = page.locator(RESPONSE_SELECTOR).last.inner_html()
+        return markdownify.markdownify(html, heading_style="ATX").strip() or fallback
+    except Exception as exc:  # noqa: BLE001
+        log.warning("HTML → Markdown conversion failed (%s); using plain text", exc)
+        return fallback
+
+
+def run_claude_web(prompt: str) -> str:
+    """Send `prompt` in a new Claude.ai chat and return the reply as Markdown."""
+    log.info("Claude.ai automation: prompt %d chars", len(prompt))
+    with _browser(headless=settings.claude_headless) as context:
+        page = _new_chat_page(context)
+        _wait_for_editor(context, page, interactive=_interactive())
+        _set_login_required(False)
+
+        editor = page.locator(EDITOR_SELECTOR).first
+        editor.fill(prompt)
+        page.wait_for_timeout(1000)
+        send = page.locator(SEND_BUTTON_SELECTOR)
+        if send.count():
+            send.first.click()
         else:
-            report = Report(
-                trading_day=trading_day,
-                content=result_text,
-                article_ids=article_ids
-            )
-            session.add(report)
-        session.commit()
-        
-    return result_text
+            editor.press("Control+Enter")
+
+        deadline = time.monotonic() + settings.claude_response_timeout_s
+        last_text, stable = "", 0
+        while time.monotonic() < deadline:
+            page.wait_for_timeout(POLL_INTERVAL_MS)
+            current = _read_last_response(page)
+            if not current:
+                continue
+            if current == last_text:
+                stable += 1
+                if stable >= STABLE_POLLS_REQUIRED:
+                    log.info("Claude.ai response complete: %d chars", len(current))
+                    return _last_response_markdown(page, current)
+            else:
+                stable, last_text = 0, current
+
+        raise ClaudeWebError(
+            f"no complete response within {settings.claude_response_timeout_s}s "
+            f"(got {len(last_text)} chars)"
+        )
+
+
+def login() -> int:
+    """Open a headed browser so the user can log in to Claude.ai once."""
+    print(f"Opening Claude.ai with profile {settings.chrome_profile_dir}")
+    print("Log in in the browser window; it closes automatically once the chat box appears (5 min max).")
+    with _browser(headless=False) as context:
+        page = _new_chat_page(context)
+        try:
+            _wait_for_editor(context, page, interactive=True)
+        except ClaudeWebError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            return 1
+    _set_login_required(False)
+    print("✓ Logged in. The pipeline can now use the claude_web report provider.")
+    if settings.claude_headless:
+        print("⚠ CLAUDE_HEADLESS=true: Claude.ai's bot check blocks headless browsers, so the pipeline will fail "
+              "even though you are logged in. Set CLAUDE_HEADLESS=false in .env.", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    if len(sys.argv) > 1 and sys.argv[1] == "login":
+        sys.exit(login())
+    print(run_claude_web("Reply with exactly: TEST SUCCESSFUL"))

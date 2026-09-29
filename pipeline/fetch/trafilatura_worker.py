@@ -47,7 +47,7 @@ def _extract_sync(html: str, url: str) -> tuple[str | None, str]:
             return text.strip(), "snippet"
         else:
             return None, "headline"
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — a parser crash must not fail the batch
         log.debug("trafilatura extraction error for %s: %s", url, exc)
         return None, "headline"
 
@@ -57,7 +57,7 @@ async def extract(html: str, url: str) -> tuple[str | None, str]:
     Async wrapper: run trafilatura in the thread pool executor.
     Returns (body_text, content_quality).
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     body, quality = await loop.run_in_executor(_EXECUTOR, _extract_sync, html, url)
     log.debug("trafilatura [%s] %s → %d chars", quality, url, len(body) if body else 0)
     return body, quality

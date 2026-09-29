@@ -3,120 +3,67 @@ pipeline/db/neon.py
 ───────────────────
 SQLAlchemy engine and session factory for the Neon cloud database.
 
-This module is used ONLY for the laptop → Neon sync (write direction).
-The FastAPI backend on Render connects to Neon directly via its own
-environment variables, using a read-only role.
+Used only for the laptop → Neon sync (write direction).  `neon_engine` and
+`NeonSession` are None when NEON_DB_URL is not configured, so importing this
+module never fails during local-only development.
 
-Usage:
-    from pipeline.db.neon import NeonSession
-
-    with NeonSession() as session:
-        session.add(...)
-        session.commit()
-
-Run directly to create/verify all tables on Neon:
-    python pipeline/db/neon.py
-
-IMPORTANT: NEON_DB_URL must be set in .env before running.
+Run directly to create/upgrade all tables on Neon:
+    python -m pipeline.db.neon
 """
 from __future__ import annotations
 
 import logging
 import sys
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
 from pipeline.config import settings
-from pipeline.db.models import Base
+from pipeline.db.schema import ensure_schema, list_tables, missing_tables
 
 log = logging.getLogger(__name__)
 
 
-def _build_neon_engine():
-    """
-    Build the Neon engine, but only if NEON_DB_URL is configured.
-    Returns None gracefully if the URL is empty (so imports don't crash
-    when Neon isn't set up yet during early development).
-    """
+def _build_neon_engine() -> Engine | None:
     url = settings.neon_db_url
     if not url:
-        log.warning(
-            "NEON_DB_URL is not set — Neon engine will be unavailable. "
-            "Set it in .env when you have a Neon project."
-        )
         return None
-
+    connect_args = {} if "sslmode=" in url else {"sslmode": "require"}
     return create_engine(
         url,
-        pool_size=2,        # Neon free tier has limited connections
+        pool_size=2,          # Neon free tier has limited connections
         max_overflow=3,
         pool_pre_ping=True,
-        echo=False,
-        connect_args={
-            # Neon uses SSL by default
-            "sslmode": "require",
-        },
+        connect_args=connect_args,
     )
 
 
 neon_engine = _build_neon_engine()
-
-# Session factory — will be None if NEON_DB_URL is not set
 NeonSession = sessionmaker(bind=neon_engine, autocommit=False, autoflush=False) if neon_engine else None
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def create_all_tables() -> None:
-    """Create all tables on Neon that don't yet exist (idempotent)."""
+    """Create missing tables on Neon and apply column upgrades (idempotent)."""
     if neon_engine is None:
-        log.error("Cannot run Neon migrations: NEON_DB_URL is not configured.")
-        sys.exit(1)
-    log.info("Creating tables on Neon...")
-    Base.metadata.create_all(bind=neon_engine)
-    log.info("Done.")
+        raise RuntimeError("NEON_DB_URL is not configured")
+    ensure_schema(neon_engine)
 
 
-def verify_tables() -> list[str]:
-    """Return the list of table names that currently exist on Neon."""
+def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
     if neon_engine is None:
-        return []
-    with neon_engine.connect() as conn:
-        result = conn.execute(
-            text(
-                "SELECT tablename FROM pg_tables "
-                "WHERE schemaname = 'public' ORDER BY tablename"
-            )
-        )
-        return [row[0] for row in result]
-
-
-# ---------------------------------------------------------------------------
-# CLI entry point
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s — %(message)s",
-    )
-
-    if not settings.neon_db_url:
-        print("✗ NEON_DB_URL is not set in .env — cannot migrate Neon.", file=sys.stderr)
-        print("  Set NEON_DB_URL and rerun: python pipeline/db/neon.py")
-        sys.exit(1)
-
+        print("⚠ NEON_DB_URL is not set — skipping Neon migration.")
+        return 0
     create_all_tables()
+    tables = list_tables(neon_engine)
+    print(f"✓ Neon has {len(tables)} tables: {', '.join(tables)}")
+    missing = missing_tables(neon_engine)
+    if missing:
+        print(f"✗ Missing tables: {sorted(missing)}", file=sys.stderr)
+        return 1
+    return 0
 
-    tables = verify_tables()
-    print(f"\n✓ Tables in Neon ({len(tables)} total):")
-    for t in tables:
-        print(f"   {t}")
 
-    if len(tables) < 9:
-        print("\n✗ Expected at least 9 tables! Check your models.", file=sys.stderr)
-        sys.exit(1)
-
-    print("\n✓ Neon migration verified.")
+if __name__ == "__main__":
+    sys.exit(main())

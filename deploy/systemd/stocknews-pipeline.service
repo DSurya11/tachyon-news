@@ -1,0 +1,14 @@
+# One pipeline run from the deployed release. Started by stocknews-pipeline.timer.
+[Unit]
+Description=Stock-news pipeline run
+After=network-online.target
+Wants=network-online.target
+OnFailure=stocknews-notify@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=@RELEASE@
+ExecStart=@PYTHON@ -m pipeline.run_pipeline --unattended
+Environment=PYTHONUNBUFFERED=1
+Nice=10
+TimeoutStartSec=55min

@@ -1,0 +1,11 @@
+# Hourly, and once on wake-up when a run was missed while the laptop slept (Persistent=true).
+[Unit]
+Description=Hourly stock-news pipeline
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=20s
+
+[Install]
+WantedBy=timers.target

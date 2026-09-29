@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: stocknews
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"   # loopback only — never expose the dev password to the LAN
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:

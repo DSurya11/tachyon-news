@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stock News</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <meta name="description" content="Real-time sector-grouped market news with AI synthesis">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@200;300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="wrap">
+
+    <header>
+      <div class="hin">
+        <div class="brand">
+          <div class="logo">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.247 7.761a6 6 0 0 1 0 8.478"/><path d="M19.075 4.933a10 10 0 0 1 0 14.134"/><path d="M4.925 19.067a10 10 0 0 1 0-14.134"/><path d="M7.753 16.239a6 6 0 0 1 0-8.478"/><circle cx="12" cy="12" r="2"/></svg>
+            <div><b>TACHYON NEWS</b><small>STOCK.NEWS.v1</small></div>
+          </div>
+          <div class="clock">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg>
+            <span id="clock" class="tnum">--:--:-- UTC</span>
+            <span class="live"><i></i>LIVE</span>
+          </div>
+        </div>
+
+        <div class="tiles">
+          <div class="tile" id="pipeline">
+            <div style="display:flex;align-items:center;gap:8px"><span class="pdot"></span><span class="lb">PIPELINE</span></div>
+            <div class="kv">
+              <span><span>LAST</span> <span class="v" id="p-last">--</span></span>
+              <span><span>ITEMS</span> <span class="v" id="p-items">--</span></span>
+              <span><span>ERR</span> <span class="v" id="p-err" style="color:var(--amber)">--</span></span>
+            </div>
+          </div>
+          <div class="tile ready">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--green)" aria-hidden="true"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>
+            <div class="grow">
+              <div class="top"><span class="lb">READINESS</span><span class="pct" id="ready-pct">--%</span></div>
+              <div class="bar"><i id="ready-bar" style="width:0%"></i><u></u></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tapew" aria-label="Market ticker">
+        <div class="tape" id="tape"></div>
+      </div>
+    </header>
+
+    <main>
+      <div class="hero">
+        <div class="eyebrow">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--green)" aria-hidden="true"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></svg>
+          <span>// LIVE INTELLIGENCE FEED</span>
+        </div>
+        <h1>The market, <span class="it">summarized</span><br><span class="gr">by sector.</span></h1>
+        <p class="lede">AI-distilled headlines from across the wire, grouped by GICS sector, with a daily AI market brief, live quotes and sparklines. Routine noise filtered out.</p>
+      </div>
+
+      <section id="report" class="report" hidden aria-labelledby="report-title">
+        <div class="report-head">
+          <div class="l">
+            <span class="lb" id="report-title">DAILY BRIEF</span>
+            <span class="mono report-day" id="report-day"></span>
+          </div>
+          <div class="r">
+            <span class="lb" id="report-meta"></span>
+            <button class="chip" id="report-toggle" type="button" aria-expanded="false" aria-controls="report-body">EXPAND</button>
+          </div>
+        </div>
+        <div class="report-body" id="report-body"></div>
+      </section>
+
+      <div class="ctrl">
+        <div class="chips" id="chips"></div>
+        <div class="right">
+          <label class="search">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+            <input id="search" type="text" placeholder="search headlines, tickers…" autocomplete="off" spellcheck="false">
+          </label>
+          <button class="chip rbtn" id="refresh" type="button">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+            REFRESH
+          </button>
+        </div>
+      </div>
+
+      <div id="banner" class="banner" hidden></div>
+      <div id="feed"></div>
+
+      <footer>
+        <span id="foot-count">TACHYON.NEWS // 0 STORIES LIVE</span>
+        <span style="display:flex;align-items:center;gap:8px">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+          NOT INVESTMENT ADVICE // DATA MAY BE DELAYED
+        </span>
+      </footer>
+    </main>
+  </div>
+
+  <!-- TradingView modal -->
+  <div class="modal" id="modal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-head">
+        <span class="mono" id="modal-title">CHART</span>
+        <button id="modal-close" class="modal-x" type="button" aria-label="Close chart">✕</button>
+      </div>
+      <div id="tradingview_chart"></div>
+    </div>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/mock-data.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Dark background matching the UI -->
+  <rect width="100" height="100" rx="20" fill="#050505" />
+  <!-- A glowing neon green sparkline trending up -->
+  <path d="M 20,75 L 45,50 L 60,65 L 80,25" fill="none" stroke="#00ff9d" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
+  <!-- Endpoint dot -->
+  <circle cx="80" cy="25" r="8" fill="#00ff9d" />
+</svg>
