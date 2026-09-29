@@ -47,19 +47,27 @@ Trading days close at 4 PM ET; after-hours and weekend news roll to the next ses
 Prerequisites: Python 3.11+, Docker, Node 22 (OmniRoute and the dashboard), a Finnhub key (free) for live quotes.
 Optional: [Tailscale](https://tailscale.com) (to reach the API from the hosted dashboard) and the Vercel CLI.
 
+From nothing to running, in order (every `make` command runs from the repository's top folder):
+
 ```bash
 git clone https://github.com/DSurya11/tachyon-news && cd tachyon-news
-make setup            # venv, dependencies, Playwright Chromium, .env from template
-$EDITOR .env          # see "Configuration"
-make db-up            # Postgres 16 in Docker
-make migrate          # create/upgrade tables (local + Neon if configured)
 
-npm i -g omniroute    # one-time: open http://localhost:20128, add Gemini/Groq keys,
-                      # create a combo named "extraction-combo"
-make run-pipeline     # one full run, to check the setup
-make up               # everything up: installs it the first time (tests, snapshot, systemd), then checks it all
-make down             # everything off, and it stays off after a reboot
+make up               # 1st time: sets up the venv, dependencies and browser, copies .env, and stops
+$EDITOR .env          # fill it in (see "Configuration"): FINNHUB_API_KEY, CORS_ORIGINS, PUBLIC_*_URL, …
+
+npm i -g omniroute    # LLM router for extraction: run `omniroute serve` once, open http://localhost:20128,
+                      # add free provider keys (Gemini, Groq, …), create a combo named "extraction-combo", Ctrl-C
+make claude-login     # optional: log in to Claude.ai once, for the best daily briefs
+
+# optional, for the hosted dashboard: Tailscale on this machine, then (once)
+sudo tailscale up && sudo tailscale set --operator=$USER --accept-dns=false
+# and allow Funnel for this machine when Tailscale's admin console asks
+
+make up               # everything up: Postgres + tables, tests, snapshot, services, timers, Funnel, then a full check
 ```
+
+After that, `make up` is the only command you need (any time, safe to repeat), and `make down` switches everything
+off and keeps it off after a reboot. The first pipeline run starts within the hour (or run `make run-pipeline`).
 
 Open **http://localhost:3000** (or the hosted dashboard). See [Running it day to day](#running-it-day-to-day) for what
 `make up` sets up. While developing, `make dev-up` / `make dev-down` run OmniRoute, the API and the dashboard from the

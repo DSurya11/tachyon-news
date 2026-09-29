@@ -201,7 +201,8 @@ release: ## Test, build and snapshot the code production runs (SKIP_TESTS=1 to s
 install-services: ## Install/refresh the systemd user units (after a release)
 	@[ -f $(RELEASE_DIR)/RELEASE ] || { echo "✗ No release yet: run make deploy"; exit 1; }
 	@command -v omniroute >/dev/null || { echo "✗ omniroute not found on PATH (npm i -g omniroute)"; exit 1; }
-	@$(MAKE) --no-print-directory down >/dev/null
+	@# Only the development copies (make dev-up) make way: never `make down`, which also stops Postgres.
+	@$(MAKE) --no-print-directory dev-down >/dev/null
 	@mkdir -p $(SYSTEMD_DIR)
 	@for f in deploy/systemd/*; do \
 		sed -e 's|@RELEASE@|$(RELEASE_DIR)|g' -e 's|@PYTHON@|$(CURDIR)/$(PY)|g' -e 's|@VENV@|$(CURDIR)/$(VENV)|g' \
@@ -216,6 +217,10 @@ install-services: ## Install/refresh the systemd user units (after a release)
 
 deploy: release install-services ## Production: test, snapshot, then (re)start everything under systemd
 	@systemctl --user restart $(SERVICES)
+	@# Healthy means the API can read the database too (/health is 503 without it).
+	@for i in $$(seq 30); do curl -sf http://127.0.0.1:$(BACKEND_PORT)/health >/dev/null 2>&1 && break; sleep 1; done; \
+	 curl -sf http://127.0.0.1:$(BACKEND_PORT)/health >/dev/null 2>&1 \
+	 || { echo "✗ Deployed, but the API isn't healthy (database down?): make up, then make doctor"; exit 1; }
 	@echo "✓ Deployed. Dashboard http://localhost:$(FRONTEND_PORT) · make doctor · make journal"
 
 undeploy: ## Stop and remove the systemd units (release and backups stay; make dev-up for development)

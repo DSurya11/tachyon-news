@@ -202,3 +202,13 @@ def test_a_shutdown_mid_run_stops_cleanly_without_a_crash_alert(monkeypatch):
     assert signal.getsignal(signal.SIGTERM) is before  # handler restored
     with run_pipeline.run_lock():  # and the lock was released
         pass
+
+
+def test_deploy_never_stops_everything():
+    """`make down` stops Postgres; deploying once called it and left the site without a database."""
+    from pipeline.config import PROJECT_ROOT
+
+    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    recipe = makefile.split("\ninstall-services:", 1)[1].split("\n\n", 1)[0]
+    assert "dev-down" in recipe
+    assert " down " not in recipe.replace("dev-down", "") and "stop.sh" not in recipe

@@ -3,7 +3,8 @@
 #
 #   scripts/up.sh          (or: make up)
 #
-# - Docker and the Postgres container (data kept between runs)
+# - first run: make setup (venv, dependencies, browser, .env), then stops so .env can be filled in
+# - Docker and the Postgres container (data kept between runs), tables created or upgraded
 # - the production services under systemd: OmniRoute, the API (:8080), the local dashboard (:3000)
 # - the hourly pipeline and daily backup timers (a run missed while the laptop was off or asleep
 #   starts straight away)
@@ -31,7 +32,15 @@ wait_for() {  # wait_for <seconds> <command...>
 }
 env_value() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"'"'"; }
 
-[ -f .env ] || die "No .env yet: run  make setup  and fill it in."
+# 0. First run on this machine: Python environment, dependencies, browser, .env ----------------------
+if [ ! -x venv/bin/python ]; then
+  step "First run: setting up (Python environment, dependencies, browser)"
+  make --no-print-directory setup || die "make setup failed; see above."
+fi
+[ -f .env ] || cp .env.example .env
+if cmp -s .env .env.example; then
+  die "Fill in .env first (template copied; see README → Configuration), then run make up again."
+fi
 
 # 1. Docker and Postgres ---------------------------------------------------------------------------
 if ! docker info >/dev/null 2>&1; then
@@ -42,6 +51,7 @@ fi
 step "Postgres"
 docker compose -f docker/docker-compose.yml up -d postgres >/dev/null 2>&1 || die "Docker could not start Postgres."
 wait_for 60 docker exec stocknews-postgres pg_isready -U postgres -d stocknews || die "Postgres didn't become ready."
+venv/bin/python -m pipeline.db.local >/dev/null 2>&1 || die "Couldn't create the tables: venv/bin/python -m pipeline.db.local"
 
 # 2. Install on first use --------------------------------------------------------------------------
 if ! systemctl --user cat stocknews-api.service >/dev/null 2>&1 || [ ! -f "$HOME/.local/share/stock-news-pipeline/release/RELEASE" ]; then
