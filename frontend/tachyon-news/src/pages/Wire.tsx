@@ -9,6 +9,7 @@ import { Empty } from '@/components/app/Empty'
 import { PageHeader } from '@/components/app/PageHeader'
 import { StoryRow } from '@/components/app/StoryRow'
 import { useNewsPages, useSummary } from '@/hooks/queries'
+import { useMarket } from '@/hooks/use-market'
 import { rangeLabel, useRange } from '@/hooks/use-range'
 import { etDayKey } from '@/lib/format'
 import type { Article } from '@/lib/types'
@@ -54,6 +55,7 @@ function useDebounced<T>(value: T, ms = 300) {
 */
 export default function Wire() {
   const { range } = useRange()
+  const { market } = useMarket()
   const [params, setParams] = useSearchParams()
   const top = params.get('view') === 'top'
   const q = params.get('q') ?? ''
@@ -62,7 +64,11 @@ export default function Wire() {
   const event = params.get('event') ?? ''
   const verified = params.get('verified') === '1'
   const density = params.get('density') === 'compact'
-  const selected = params.get('a')
+  // The row j / k last moved to, and the list it was in. Kept here rather than in the URL as
+  // ?a=<id>: the inspector reads that as "open this story", and its dialog then took the keys,
+  // so j worked once.
+  const [mark, setMark] = useState<{ id: number; list: string } | null>(null)
+  const bar = useRef<HTMLDivElement>(null)
 
   const set = (patch: Record<string, string | null>, replace = false) => {
     const next = new URLSearchParams(params)
@@ -76,29 +82,49 @@ export default function Wire() {
   useEffect(() => { if (qSearch !== q) set({ q: qSearch }, true) }, [qSearch]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data: summary } = useSummary()
-  const { data, isLoading, isFetching, hasNextPage, fetchNextPage, isFetchingNextPage } = useNewsPages(
+  const { data, isLoading, isFetching, isPlaceholderData, hasNextPage, fetchNextPage, isFetchingNextPage } = useNewsPages(
     { q: q || undefined, sector: sector || undefined, sentiment: sent || undefined, event: event || undefined, verifiedOnly: verified, picks: top }, PAGE)
-  const list = useMemo(() => data?.pages.flatMap((p) => p.articles) ?? [], [data])
+  // Each story once. Pages are fetched by offset, so stories that arrive between two page loads
+  // push the end of one page into the next; those rows showed twice until the next refresh.
+  const list = useMemo(() => {
+    const ids = new Set<number>()
+    return (data?.pages.flatMap((p) => p.articles) ?? []).filter((a) => !ids.has(a.id) && ids.add(a.id))
+  }, [data])
   const total = data?.pages[0]?.total ?? 0
   const allCount = summary?.count ?? 0
   const pickCount = summary?.picks ?? 0
-  const filterKey = [rangeLabel(range), top, q, sector, sent, event, verified].join('|')
+  const filterKey = [rangeLabel(range), market, top, q, sector, sent, event, verified].join('|')
+  const cursor = mark?.list === filterKey ? mark.id : null // a different list starts from its top
 
-  // "New" = arrived since this page was opened (or since the notice was dismissed).
-  const [seen, setSeen] = useState<Set<number> | null>(null)
-  if (seen === null && list.length) setSeen(new Set(list.map((a) => a.id))) // first data: everything counts as seen
-  const fresh = useMemo(() => new Set(seen ? list.filter((a) => !seen.has(a.id)).map((a) => a.id) : []), [list, seen])
+  // "New" = arrived in this list since it was first shown (or since the notice was dismissed).
+  // A different list (another filter, market or range) and older pages loaded by scrolling are
+  // not news; both used to be announced as "N new stories just arrived".
+  const [seen, setSeen] = useState<{ list: string; pages: number; ids: Set<number> } | null>(null)
+  const pageCount = data?.pages.length ?? 0
+  const markAllSeen = () => setSeen({ list: filterKey, pages: pageCount, ids: new Set(list.map((a) => a.id)) })
+  if (list.length && !isPlaceholderData) { // while a new list loads, the previous one is still on screen
+    if (seen?.list !== filterKey) markAllSeen()
+    else if (pageCount > seen.pages) {
+      const older = data!.pages.slice(seen.pages).flatMap((p) => p.articles.map((a) => a.id))
+      setSeen({ list: filterKey, pages: pageCount, ids: new Set([...seen.ids, ...older]) })
+    }
+  }
+  const fresh = useMemo(
+    () => new Set(seen?.list === filterKey && !isPlaceholderData ? list.filter((a) => !seen.ids.has(a.id)).map((a) => a.id) : []),
+    [list, seen, filterKey, isPlaceholderData])
 
   // Older stories load from the server as the end of the list comes into view.
   const more = () => { if (hasNextPage && !isFetchingNextPage) fetchNextPage() }
-  const sentinel = useRef<HTMLDivElement>(null)
+  // The marker at the end of the list is held in state, not a ref: a different list is a new
+  // element, and the observer has to follow it. Watching the old one, scrolling stopped loading
+  // whenever two lists happened to have the same number of rows (100 and 100).
+  const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null)
   useEffect(() => {
-    const el = sentinel.current
-    if (!el || !hasNextPage) return
+    if (!sentinel || !hasNextPage) return
     const io = new IntersectionObserver(([e]) => { if (e.isIntersecting && !isFetchingNextPage) fetchNextPage() }, { rootMargin: '800px' })
-    io.observe(el)
+    io.observe(sentinel)
     return () => io.disconnect()
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage, list.length])
+  }, [sentinel, hasNextPage, isFetchingNextPage, fetchNextPage, list.length])
 
   const groups = useMemo(() => {
     const g = new Map<string, Article[]>()
@@ -111,17 +137,26 @@ export default function Wire() {
     return [...g.entries()]
   }, [list, top])
 
-  // j / k keyboard navigation through the visible list.
+  // j / k move through the visible list. The row is marked and takes focus, so Enter opens it
+  // and, once the story is closed again, j carries on from there.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).closest('input, textarea, select, [role="dialog"]') || e.metaKey || e.ctrlKey) return
       if (e.key !== 'j' && e.key !== 'k') return
-      const i = list.findIndex((a) => String(a.id) === selected)
+      // From the row that has focus (clicked, tabbed to, or reached this way), else the last one marked.
+      const focused = (e.target as HTMLElement).closest<HTMLElement>('[data-row]')?.dataset.row
+      const i = list.findIndex((a) => String(a.id) === (focused ?? String(cursor)))
       const next = list[Math.max(0, Math.min(list.length - 1, i === -1 ? 0 : i + (e.key === 'j' ? 1 : -1)))]
       if (next) {
         if (list.indexOf(next) >= list.length - 3) more()
-        set({ a: String(next.id), t: null }, true)
-        requestAnimationFrame(() => document.querySelector(`[data-row="${next.id}"]`)?.scrollIntoView({ block: 'nearest' }))
+        setMark({ id: next.id, list: filterKey })
+        const row = document.querySelector<HTMLElement>(`#wire-rows [data-row="${next.id}"]`)
+        if (!row) return
+        row.focus({ preventScroll: true })
+        // Scroll only as far as needed, and never under the filter bar that sticks to the top.
+        const at = row.getBoundingClientRect(), top = (bar.current?.getBoundingClientRect().bottom ?? 0) + 8
+        if (at.top < top) window.scrollBy({ top: at.top - top })
+        else if (at.bottom > window.innerHeight - 8) window.scrollBy({ top: at.bottom - window.innerHeight + 8 })
       }
     }
     window.addEventListener('keydown', onKey)
@@ -136,11 +171,13 @@ export default function Wire() {
       <PageHeader kicker={top ? `Ranked by the writer of the daily brief · ${rangeLabel(range)}` : rangeLabel(range)} title={top ? 'Top picks' : 'The wire'}>
         {top
           ? <>The stories that matter most, most important first, each with a line on why. Switch back to <em>All stories</em> to read everything.</>
-          : <>Every story the pipeline has read, newest first. Press <kbd className="num rounded border px-1 text-xs">j</kbd> and <kbd className="num rounded border px-1 text-xs">k</kbd> to move through them.</>}
+          : <>Every story the pipeline has read, newest first. Press <kbd className="num rounded border px-1 text-xs">j</kbd> and <kbd className="num rounded border px-1 text-xs">k</kbd> to move through them, <kbd className="num rounded border px-1 text-xs">Enter</kbd> to open one.</>}
       </PageHeader>
 
       {/* Solid background: backdrop-blur on a sticky bar re-blurs the list under it on every scroll frame. */}
-      <div className="sticky top-(--topbar-h) z-20 -mx-4 mb-3 border-b bg-background px-4 py-3 sm:-mx-6 sm:px-6">
+      {/* Sticks from tablet width up. On a phone the filters wrap to five rows: stuck under the top bar they
+          and the tab bar left under half the screen for stories, so there they scroll away with the page. */}
+      <div ref={bar} className="z-20 -mx-4 mb-3 border-b bg-background px-4 py-3 sm:sticky sm:top-(--topbar-h) sm:-mx-6 sm:px-6">
         <div className="flex flex-wrap items-center gap-2">
           <Segmented id="view-pill" value={top ? 'top' : 'all'} onChange={(v) => set({ view: v === 'top' ? 'top' : null })} options={[
             { v: 'all', label: <>All stories <span className="num text-xs text-muted-foreground">{allCount.toLocaleString()}</span></> },
@@ -179,9 +216,11 @@ export default function Wire() {
             options={[{ v: 'comfortable', label: 'Comfortable' }, { v: 'compact', label: 'Compact' }]} />
         </div>
         <div className="mt-2.5 flex items-center gap-3 text-xs text-muted-foreground">
-          <span><span className="num text-foreground">{total.toLocaleString()}</span> of <span className="num">{(top ? pickCount : allCount).toLocaleString()}</span> {top ? 'top picks' : 'stories'}{isFetching && !isFetchingNextPage && <span className="ml-2">updating…</span>}</span>
+          {/* "N of M" only when a filter narrows the list. Unfiltered, the two come from separate requests
+              a moment apart and can differ by a story ("762 of 763") with nothing filtered out. */}
+          <span><span className="num text-foreground">{total.toLocaleString()}</span>{filtered && <> of <span className="num">{(top ? pickCount : allCount).toLocaleString()}</span></>} {top ? 'top picks' : 'stories'}{isFetching && !isFetchingNextPage && <span className="ml-2">updating…</span>}</span>
           {filtered && (
-            <button type="button" onClick={() => { setQInput(''); setParams(new URLSearchParams({ ...(top ? { view: 'top' } : {}), ...(selected ? { a: selected } : {}) })) }}
+            <button type="button" onClick={() => { setQInput(''); setParams(new URLSearchParams(top ? { view: 'top' } : {})) }}
               className="inline-flex items-center gap-1 font-medium text-foreground hover:underline"><X className="size-3" />Clear filters</button>
           )}
         </div>
@@ -190,7 +229,7 @@ export default function Wire() {
       <AnimatePresence>
         {fresh.size > 0 && !top && (
           <motion.button type="button" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
-            onClick={() => { setSeen(new Set(list.map((a) => a.id))); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
+            onClick={() => { markAllSeen(); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
             className="mx-auto mb-3 flex rounded-full border bg-card px-4 py-1.5 text-[13px] shadow-sm">
             <AnimatedShinyText>{fresh.size} new {fresh.size === 1 ? 'story' : 'stories'} just arrived</AnimatedShinyText>
           </motion.button>
@@ -216,13 +255,13 @@ export default function Wire() {
               </h2>
               <div className="divide-y overflow-hidden rounded-xl border bg-card shadow-(--shadow-card)">
                 {items.map((a) => (
-                  <StoryRow key={a.id} article={a} compact={density} selected={String(a.id) === selected} fresh={fresh.has(a.id)} showPick={top} />
+                  <StoryRow key={a.id} article={a} compact={density} selected={a.id === cursor} fresh={fresh.has(a.id)} showPick={top} />
                 ))}
               </div>
             </section>
           ))}
           {hasNextPage && (
-            <div ref={sentinel} className="flex justify-center py-2">
+            <div ref={setSentinel} className="flex justify-center py-2">
               <button type="button" onClick={more} disabled={isFetchingNextPage} className="text-[13px] font-medium text-muted-foreground hover:text-foreground">
                 {isFetchingNextPage ? 'Loading older stories…' : <>Load older stories <span className="num">({(total - list.length).toLocaleString()} left)</span></>}
               </button>

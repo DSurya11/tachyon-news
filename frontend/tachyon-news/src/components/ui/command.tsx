@@ -39,12 +39,15 @@ function CommandDialog({
   children,
   className,
   showCloseButton = false,
+  filter,
   ...props
 }: React.ComponentProps<typeof Dialog> & {
   title?: string
   description?: string
   className?: string
   showCloseButton?: boolean
+  /** How well an item matches what was typed (0 hides it); cmdk's own ranking when omitted. */
+  filter?: React.ComponentProps<typeof CommandPrimitive>["filter"]
 }) {
   return (
     <Dialog {...props}>
@@ -60,7 +63,7 @@ function CommandDialog({
         showCloseButton={showCloseButton}
       >
         {/* cmdk's input, list and items need their <Command> root; without it the menu crashed on open. */}
-        <Command className="**:data-[slot=command-input-wrapper]:h-12 **:[[cmdk-group-heading]]:px-2 **:[[cmdk-group-heading]]:font-medium **:[[cmdk-group-heading]]:text-muted-foreground **:[[cmdk-item]]:px-2 **:[[cmdk-item]]:py-2">
+        <Command filter={filter} className="**:data-[slot=command-input-wrapper]:h-12 **:[[cmdk-group-heading]]:px-2 **:[[cmdk-group-heading]]:font-medium **:[[cmdk-group-heading]]:text-muted-foreground **:[[cmdk-item]]:px-2 **:[[cmdk-item]]:py-2">
           {children}
         </Command>
       </DialogContent>

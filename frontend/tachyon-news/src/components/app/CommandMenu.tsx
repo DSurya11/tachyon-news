@@ -1,4 +1,5 @@
 import { Banknote, BookOpenText, Globe2, LayoutGrid, LogOut, Moon, Newspaper, Search, Star, Sun, Trophy } from 'lucide-react'
+import { defaultFilter } from 'cmdk'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from '@/components/ui/command'
@@ -10,6 +11,34 @@ import { MARKET_LABEL, useMarket } from '@/hooks/use-market'
 import { useTheme } from '@/hooks/use-theme'
 import { useWatchlist } from '@/hooks/use-watchlist'
 import { ago } from '@/lib/format'
+
+/*
+  What counts as a match, and what Enter runs.
+
+  Any short word could be a ticker, so it gets a "Look up X" row. That row used to sit first and
+  win: Enter on "brief", "theme" or "energy" looked up a ticker by that name. Now, when the word
+  names something (a page, a setting, a sector, a ticker in the news), that comes first and the
+  lookup goes to the end; a symbol that names nothing else ("TSM") is still one Enter away.
+
+  cmdk scores a word or its initials at about 0.8-0.9 and letters scattered through a phrase
+  under 0.2. Pages, settings and sectors need the former: scattered letters made "india" offer
+  Industrials and "tsm" Consumer Discretionary. (This cmdk version keeps groups in the order
+  they are written, whatever they score, so the order below is the order on screen.)
+*/
+const NAMES = 0.5
+const FIXED_ROWS = [
+  'go overview', 'go wire feed', 'go brief', 'go watchlist', 'go top picks ai ranked important', 'toggle theme dark light',
+  ...(['all', 'global', 'india'] as const).map((m) => `market ${MARKET_LABEL[m]}`),
+  ...(['native', 'USD', 'INR'] as const).map((c) => `currency prices ${CURRENCY_LABEL[c]} ${c}`),
+  'sign out log out',
+]
+const matches: typeof defaultFilter = (value, search, keywords) => {
+  // Offered for this very text, or matched by the server (perhaps in the summary, not the headline).
+  if (value.startsWith('lookup ') || value.startsWith('story ')) return 1
+  const score = defaultFilter(value, search, keywords)
+  if (value.startsWith('ticker ')) return score // already narrowed to symbols containing the text
+  return score >= NAMES ? score : 0
+}
 
 export function CommandMenu({ open, setOpen }: { open: boolean; setOpen: (o: boolean) => void }) {
   const navigate = useNavigate()
@@ -38,9 +67,16 @@ export function CommandMenu({ open, setOpen }: { open: boolean; setOpen: (o: boo
     : tickers
   const shownTickers = [...new Set([...(upper ? [] : list), ...list.filter((s) => s.includes(upper)), ...matching.slice(0, 40).map((t) => t.symbol)])]
   const lookup = /^(?:[A-Z][A-Z0-9.-]{0,5}|[A-Z][A-Z0-9&-]{0,14}\.(?:NS|BO))$/.test(upper) && !shownTickers.includes(upper)
+  const named = lookup && [...FIXED_ROWS, ...(summary?.sectors ?? []).map((x) => `sector ${x.name}`), ...shownTickers.map((x) => `ticker ${x}`)]
+    .some((v) => defaultFilter(v, query.trim()) >= NAMES)
+  const lookupRow = lookup && (
+    <CommandItem value={`lookup ${upper}`} onSelect={() => run(() => openTicker(upper))}>
+      <Search /> Look up <span className="num font-medium">{upper}</span>
+    </CommandItem>
+  )
 
   return (
-    <CommandDialog open={open} onOpenChange={setOpen} title="Search" description="Search tickers, sectors and stories">
+    <CommandDialog open={open} onOpenChange={setOpen} filter={matches} title="Search" description="Search tickers, sectors and stories">
       <CommandInput placeholder="Search tickers, sectors, stories…" value={query} onValueChange={setQuery} />
       <CommandList>
         <CommandEmpty>No results.</CommandEmpty>
@@ -55,11 +91,7 @@ export function CommandMenu({ open, setOpen }: { open: boolean; setOpen: (o: boo
               </CommandItem>
             )
           })}
-          {lookup && (
-            <CommandItem value={`ticker ${upper} lookup`} onSelect={() => run(() => openTicker(upper))}>
-              <Search /> Look up <span className="num font-medium">{upper}</span>
-            </CommandItem>
-          )}
+          {!named && lookupRow}
         </CommandGroup>
         <CommandGroup heading="Sectors">
           {(summary?.sectors ?? []).map((s) => (
@@ -68,17 +100,6 @@ export function CommandMenu({ open, setOpen }: { open: boolean; setOpen: (o: boo
             </CommandItem>
           ))}
         </CommandGroup>
-        {query.trim().length >= 2 && (
-          <CommandGroup heading={searching ? 'Stories · searching…' : 'Stories'}>
-            {stories.map((a) => (
-              // The query is part of the value: the server already matched it (maybe in the summary, not the headline).
-              <CommandItem key={a.id} value={`story ${a.id} ${a.headline} ${query}`} onSelect={() => run(() => openArticle(a.id))}>
-                <Newspaper /><span className="truncate">{a.headline}</span>
-                <span className="ml-auto shrink-0 text-xs text-muted-foreground">{ago(a.published_at)}</span>
-              </CommandItem>
-            ))}
-          </CommandGroup>
-        )}
         <CommandGroup heading="Go to">
           <CommandItem value="go overview" onSelect={() => run(() => navigate('/'))}><LayoutGrid /> Overview<CommandShortcut>1</CommandShortcut></CommandItem>
           <CommandItem value="go wire feed" onSelect={() => run(() => navigate('/wire'))}><Newspaper /> The wire<CommandShortcut>2</CommandShortcut></CommandItem>
@@ -108,6 +129,18 @@ export function CommandMenu({ open, setOpen }: { open: boolean; setOpen: (o: boo
             <CommandItem value="sign out log out" onSelect={() => run(() => void signOut())}><LogOut /> Sign out</CommandItem>
           </CommandGroup>
         )}
+        {query.trim().length >= 2 && (
+          <CommandGroup heading={searching ? 'Stories · searching…' : 'Stories'}>
+            {stories.map((a) => (
+              // The query is part of the value: the server already matched it (maybe in the summary, not the headline).
+              <CommandItem key={a.id} value={`story ${a.id} ${a.headline} ${query}`} onSelect={() => run(() => openArticle(a.id))}>
+                <Newspaper /><span className="truncate">{a.headline}</span>
+                <span className="ml-auto shrink-0 text-xs text-muted-foreground">{ago(a.published_at)}</span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+        {named && <CommandGroup heading="Ticker">{lookupRow}</CommandGroup>}
       </CommandList>
     </CommandDialog>
   )

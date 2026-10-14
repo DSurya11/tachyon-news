@@ -17,7 +17,7 @@ import { StoryRow } from '@/components/app/StoryRow'
 import { TickerSpark } from '@/components/app/TickerSpark'
 import { useHealth, useNewsPages, useReport, useSummary } from '@/hooks/queries'
 import { useInspector } from '@/hooks/use-inspector'
-import { ago, fmtDay } from '@/lib/format'
+import { ago, etToday, fmtDay, isCurrentBrief } from '@/lib/format'
 import { exchangesFor, marketStatus } from '@/lib/market'
 import { useMarket } from '@/hooks/use-market'
 import { PRESETS, rangeId, rangeLabel, rangePhrase, rangeShort, useRange, type Range } from '@/hooks/use-range'
@@ -73,10 +73,18 @@ export default function Overview() {
 
   return (
     <div className="space-y-6">
-      <PageHeader kicker={<span>{sessions} · {fmtDay(report?.trading_day ?? new Date().toISOString().slice(0, 10))}</span>}
-        title={headline(mood, sectors[0]?.name, top?.symbol)}>
-        {all.count.toLocaleString()} stories crossed the wire {rangePhrase(range)}. Every one was read, summarised and checked against its source
-        {dataUpdatedAt ? (ago(new Date(dataUpdatedAt).toISOString()) === 'now' ? ' — updated just now.' : ` — updated ${ago(new Date(dataUpdatedAt).toISOString())} ago.`) : '.'}
+      {/* Today's date, not the latest brief's: beside the live market status, a week-old brief's date read as today. */}
+      <PageHeader kicker={<span>{sessions} · {fmtDay(etToday())}</span>}
+        title={all.count ? headline(mood, sectors[0]?.name, top?.symbol) : 'A quiet wire'}>
+        {all.count ? (
+          <>
+            {all.count.toLocaleString()} stories crossed the wire {rangePhrase(range)}. Every one was read, summarised and checked against its source
+            {dataUpdatedAt ? (ago(new Date(dataUpdatedAt).toISOString()) === 'now' ? ' — updated just now.' : ` — updated ${ago(new Date(dataUpdatedAt).toISOString())} ago.`) : '.'}
+          </>
+        ) : (
+          // No stories is not a mood. Say so, and when the news was last checked: that is usually why.
+          <>No stories crossed the wire {rangePhrase(range)}{health?.last_scrape_at ? `; news was last checked ${ago(health.last_scrape_at)} ago` : ''}. Choose a longer range in the top bar to see earlier ones.</>
+        )}
       </PageHeader>
 
       <BlurFade delay={0.05} inView>
@@ -88,7 +96,7 @@ export default function Overview() {
             <span className="num"><NumberTicker value={verifiedPct} className="num text-foreground" /><span className="text-muted-foreground">%</span></span>
           </Stat>
           <Stat label={`Mood, ${span}`} footer={<><SplitBar {...all} className="mb-2" /><span className="num"><span className="text-up">{all.bullish}</span> up · {all.neutral} flat · <span className="text-down">{all.bearish}</span> down</span></>}>
-            <span className={cn(net(all) >= 0.04 && 'text-up', net(all) <= -0.04 && 'text-down')}>{mood}</span>
+            {all.count ? <span className={cn(net(all) >= 0.04 && 'text-up', net(all) <= -0.04 && 'text-down')}>{mood}</span> : '—'}
           </Stat>
           <Stat label="Most discussed" footer={top ? <QuoteText symbol={top.symbol} /> : undefined}>
             {top ? <button type="button" className="num hover:underline" onClick={() => openTicker(top.symbol)}>{top.symbol}</button> : '—'}
@@ -98,7 +106,7 @@ export default function Overview() {
 
       <div className="grid gap-3 lg:grid-cols-3">
         <BlurFade delay={0.1} inView className="lg:col-span-2">
-          <Card className="h-full" title="Today's brief" aside={report ? `${fmtDay(report.trading_day, { month: 'short', day: 'numeric' })} · written ${ago(report.created_at)} ago` : undefined}>
+          <Card className="h-full" title={!report || isCurrentBrief(report.trading_day) ? "Today's brief" : 'Latest brief'} aside={report ? `${fmtDay(report.trading_day, { month: 'short', day: 'numeric' })} · written ${ago(report.created_at)} ago` : undefined}>
             {report ? (
               <div className="flex h-[calc(100%-44px)] flex-col px-5 pb-5">
                 <div className="flex-1 font-serif text-[17.5px] leading-[1.7] text-foreground/90 [&_p]:line-clamp-6">
@@ -117,7 +125,7 @@ export default function Overview() {
         </BlurFade>
 
         <BlurFade delay={0.15} inView>
-          <Card className="h-full" title="How today's brief was made" aside="live">
+          <Card className="h-full" title={!report || isCurrentBrief(report.trading_day) ? "How today's brief was made" : 'How the brief is made'} aside="live">
             <div className="px-5 pb-5">
               <PipelineBeams scraped={Math.max(health?.articles_24h ?? 0, d24.count)} extracted={d24.count} verified={d24.verified} cited={report?.article_ids.length ?? 0}
                 briefLabel={report ? fmtDay(report.trading_day, { month: 'short', day: 'numeric' }) : '—'} />

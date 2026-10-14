@@ -1,7 +1,7 @@
 """The dashboard's time range: windowed, server-filtered /news and the /summary aggregates."""
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from pipeline.db.models import Report
 from pipeline.market_time import ET
@@ -100,6 +100,27 @@ def test_picks_follow_the_briefs_in_the_range(client, db_session):
     assert _ids(client.get(f"/news?picks=true&since={long_ago}T00:00:00Z&until={long_ago}T12:00:00Z")) == []
 
 
+def test_picks_include_the_brief_being_written_after_the_close(client, db_session):
+    s = _seed(db_session)
+    db_session.add_all([
+        # Written after Tuesday 6 Oct 2026's close, so filed under Wednesday.
+        Report(trading_day=date(2026, 10, 7), content="x", article_ids=[],
+               top_picks=[{"id": s["hour"].id, "rank": 1, "why": "a"}]),
+        # Weekend news is Monday's.
+        Report(trading_day=date(2026, 10, 12), content="y", article_ids=[],
+               top_picks=[{"id": s["week"].id, "rank": 1, "why": "b"}]),
+    ])
+    db_session.commit()
+    tuesday_evening = "since=2026-10-06T00:00:00Z&until=2026-10-06T21:00:00Z"   # until 5 PM in New York
+    assert _ids(client.get(f"/news?picks=true&{tuesday_evening}")) == ["hour"]
+    assert client.get(f"/summary?{tuesday_evening}").json()["picks"] == 1
+    saturday = "since=2026-10-10T04:00:00Z&until=2026-10-10T16:00:00Z"
+    assert _ids(client.get(f"/news?picks=true&{saturday}")) == ["week"]
+    # Before the close, Wednesday's brief does not exist yet as far as Tuesday morning's range goes.
+    tuesday_morning = "since=2026-10-06T04:00:00Z&until=2026-10-06T15:00:00Z"
+    assert _ids(client.get(f"/news?picks=true&{tuesday_morning}")) == []
+
+
 def test_summary_aggregates_the_window(client, db_session):
     _seed(db_session)
     day = client.get("/summary?hours=24").json()
@@ -142,7 +163,9 @@ def test_timeline_bar_size_follows_the_span(client, db_session):
 
 
 def test_timeline_starts_at_the_first_story(client, db_session):
-    add_article(db_session, id_hint="only", published_at=_ago(days=3))
+    # Three days before this request, not before NOW: that is fixed when the tests are collected,
+    # and a minute into a full run the story was past the 72 hours that still get hourly bars.
+    add_article(db_session, id_hint="only", published_at=datetime.now(UTC) - timedelta(days=3))
     db_session.commit()
     tl = client.get("/summary?days=365").json()["timeline"]
     assert tl["unit"] == "hour"  # three days of data, not a year of empty days

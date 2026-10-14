@@ -92,10 +92,17 @@ export interface Actions {
   close: () => void
 }
 
+// What had focus on the page when the inspector was opened from it (a row, a card, a chip), so
+// closing it with the keyboard can put focus back there.
+let opener: HTMLElement | null = null
+// eslint-disable-next-line react-refresh/only-export-components
+export const takeOpener = () => { const el = opener; opener = null; return el }
+
 function open(core: Core, from: number | null, panel: Panel) {
   const stack = core.getStack()
   if (from == null) {
     if (stack.length === 1 && panelKey(stack[0]) === panelKey(panel)) return
+    if (!stack.length) opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
     core.setStack([panel])
     return
   }

@@ -11,12 +11,12 @@ import http.server
 import socket
 import threading
 import time
-from datetime import date
 from pathlib import Path
 
 import pytest
 
 from pipeline.db.models import Report, ScrapeRun
+from pipeline.market_time import current_trading_day
 from tests.factories import NOW, add_article, add_prices
 
 playwright_api = pytest.importorskip("playwright.sync_api")
@@ -70,7 +70,7 @@ def servers(engine, clean_db):
 
 @pytest.fixture
 def seeded(db_session):
-    today = date.today()
+    today = current_trading_day()  # the day a brief written now is filed under
     arts = [
         add_article(db_session, id_hint="nv", headline="Nvidia beats estimates", tickers=("NVDA",), sector="Technology"),
         add_article(db_session, id_hint="jp", headline="JPMorgan trading jumps", tickers=("JPM",), sector="Financials",

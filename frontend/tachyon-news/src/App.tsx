@@ -7,6 +7,7 @@ import { CommandMenu } from '@/components/app/CommandMenu'
 import { useCommandMenu } from '@/hooks/use-command-menu'
 import { Inspector } from '@/components/app/Inspector'
 import { MobileNav, Sidebar } from '@/components/app/Nav'
+import { AppFailed, ErrorBoundary, PageFailed } from '@/components/app/PageBoundary'
 import { Tape } from '@/components/app/Tape'
 import { Topbar } from '@/components/app/Topbar'
 import { Logo } from '@/components/app/Logo'
@@ -107,6 +108,7 @@ function Shell() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}>
+              <ErrorBoundary key={location.pathname} fallback={<PageFailed />}>
               <Suspense fallback={<div className="h-[60vh]" />}>
               <Routes location={location}>
                 <Route path="/" element={<Overview />} />
@@ -117,6 +119,7 @@ function Shell() {
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
               </Suspense>
+              </ErrorBoundary>
           </motion.div>
         </main>
       </div>
@@ -152,6 +155,7 @@ function Gate() {
 export default function App() {
   return (
     <ThemeProvider>
+      <ErrorBoundary fallback={<AppFailed />}>
       <MotionConfig reducedMotion="user">
         <TooltipProvider delayDuration={200}>
           <HashRouter>
@@ -167,6 +171,7 @@ export default function App() {
           </HashRouter>
         </TooltipProvider>
       </MotionConfig>
+      </ErrorBoundary>
     </ThemeProvider>
   )
 }

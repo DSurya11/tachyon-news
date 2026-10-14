@@ -1,14 +1,14 @@
 import { ArrowLeft, ArrowUpRight, BadgeCheck, CircleAlert, ExternalLink, LineChart, Newspaper, TrendingUp, X } from 'lucide-react'
-import { animate, AnimatePresence, motion, useAnimate, useReducedMotion, type PanInfo } from 'motion/react'
+import { animate, AnimatePresence, motion, useAnimate, useIsPresent, useReducedMotion, type PanInfo } from 'motion/react'
 import { Dialog as DialogPrimitive } from 'radix-ui'
 import { lazy, Suspense, useCallback, useId, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Link } from 'react-router-dom'
 import { NumberTicker } from '@/components/ui/number-ticker'
 import { useArticle, useChart, useReaction, useReport, useTickerNews } from '@/hooks/queries'
 import { useRange, type Range } from '@/hooks/use-range'
-import { PanelIndexContext, panelKey, takeOrigin, useInspector, type Origin, type Panel } from '@/hooks/use-inspector'
+import { PanelIndexContext, panelKey, takeOpener, takeOrigin, useInspector, type Origin, type Panel } from '@/hooks/use-inspector'
 import { useQuote } from '@/hooks/use-quote'
-import { displaySymbol, fmtDateTime, fmtPct, hostOf, priceDigits, safeUrl, tone, tradingViewSymbol, yahooSymbol } from '@/lib/format'
+import { displaySymbol, fmtDateTime, fmtPct, hostOf, isCurrentBrief, priceDigits, safeUrl, tone, tradingViewSymbol, yahooSymbol } from '@/lib/format'
 import type { Span } from '@/lib/types'
 import { keyboardFocusReturn } from '@/lib/focus'
 import { cn } from '@/lib/utils'
@@ -92,7 +92,7 @@ function StoryPanel({ id }: { id: number }) {
       {cited && (
         <motion.div variants={item}>
           <Link to="/brief" className="group flex items-center justify-between rounded-lg border px-3 py-2.5 text-[13px] font-medium transition-colors hover:border-foreground/35">
-            Cited in today's brief
+            Cited in {isCurrentBrief(report?.trading_day) ? "today's" : 'the latest'} brief
             <ArrowUpRight className="size-4 text-muted-foreground transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
           </Link>
         </motion.div>
@@ -274,7 +274,7 @@ function TickerPanel({ symbol, from }: { symbol: string; from: Origin | null }) 
 
       <Section title={`News · ${meta.long}${page && page.total > news.length ? ` · newest ${news.length} of ${page.total.toLocaleString()}` : ''} · open beside this chart`}>
         <div className="-mx-6 divide-y border-y sm:-mx-8">
-          {news.length ? news.map((n) => <StoryRow key={n.id} article={n} compact />) : <div className="px-6 py-6 text-sm text-muted-foreground">{page ? `No stories in the last ${meta.long}.` : 'Loading…'}</div>}
+          {news.length ? news.map((n) => <StoryRow key={n.id} article={n} compact />) : <div className="px-6 py-6 text-sm text-muted-foreground">{page ? `No stories in the last ${meta.long.replace(/^1 /, '')}.` : 'Loading…'}</div>}
         </div>
       </Section>
     </motion.div>
@@ -336,6 +336,10 @@ function PanelFrame({ panel, index, focused, isFirst, total, mobile, basis, onCl
   const reduce = useReducedMotion()
   const label = usePanelLabel(panel)
   const [origin] = useState(takeOrigin)
+  // False once this panel has started closing (it is still drawn while it folds shut).
+  const present = useIsPresent()
+  const stillOpen = useRef(present)
+  useEffect(() => { stillOpen.current = present }, [present])
 
   /*
     Entrance, run before first paint. Nothing is ever scaled (text and charts stay crisp): the
@@ -368,8 +372,10 @@ function PanelFrame({ panel, index, focused, isFirst, total, mobile, basis, onCl
         { duration: 0.55, ease: EASE_OUT })
     }
     // Fully opaque throughout: the clip does the revealing (a see-through panel mid-reveal
-    // showed the page behind through its text). Drop the clip once open for the shadow.
-    run.then(() => { el.style.clipPath = '' })
+    // showed the page behind through its text). Drop the clip once open for the shadow. That
+    // goes through Motion, which owns the value and puts a cleared style straight back; and not
+    // if the panel is already closing, which animates the clip itself.
+    run.then(() => { if (stillOpen.current) animatePanel(el, { clipPath: 'none' }, { duration: 0 }) })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (focused) ref.current?.focus({ preventScroll: true }) }, [focused, ref])
 
@@ -439,6 +445,18 @@ export function Inspector() {
     : `calc((100% - ${hidden.length ? 44 + GAP_PX : 0}px - ${(visible.length - 1) * GAP_PX}px) / ${visible.length})`
   const lastIndex = stack.length - 1
 
+  // Each time a panel is opened it is a new panel, even for the same story or stock. Keyed by
+  // the story alone, one reopened while it was still folding shut was handed back half closed
+  // and stayed that way.
+  const [opened, setOpened] = useState<{ keys: string[]; times: Record<string, number> }>({ keys: [], times: {} })
+  const keys = stack.map(panelKey)
+  if (keys.join() !== opened.keys.join()) {
+    const times = { ...opened.times }
+    for (const k of keys) if (!opened.keys.includes(k)) times[k] = (times[k] ?? 0) + 1
+    setOpened({ keys, times })
+  }
+  const frameKey = (p: Panel) => `${panelKey(p)}#${opened.times[panelKey(p)] ?? 0}`
+
   return (
     <DialogPrimitive.Root open={open} onOpenChange={(o) => { if (!o) close() }}>
       <AnimatePresence>
@@ -449,7 +467,7 @@ export function Inspector() {
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} />
             </DialogPrimitive.Overlay>
             <DialogPrimitive.Content forceMount aria-describedby={undefined}
-              onCloseAutoFocus={keyboardFocusReturn()}
+              onCloseAutoFocus={keyboardFocusReturn(undefined, takeOpener)}
               onEscapeKeyDown={(e) => { e.preventDefault(); closeAt(lastIndex) }}
               onPointerDown={(e) => { if (e.target === e.currentTarget) close() }}
               className={cn('fixed inset-0 z-50 flex items-center justify-center outline-none', mobile ? 'p-0' : 'p-4 lg:p-8')}>
@@ -466,7 +484,7 @@ export function Inspector() {
                   {visible.map((p, j) => {
                     const index = visibleFrom + j
                     return (
-                      <PanelFrame key={panelKey(p)} panel={p} index={index} total={stack.length} mobile={mobile}
+                      <PanelFrame key={frameKey(p)} panel={p} index={index} total={stack.length} mobile={mobile}
                         isFirst={stack.length === 1} focused={index === lastIndex} basis={basis}
                         onClose={() => closeAt(index)} onBack={() => closeAt(lastIndex)} />
                     )

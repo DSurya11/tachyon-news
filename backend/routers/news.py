@@ -30,7 +30,7 @@ from pipeline.db.queries import (
     sector_lookup,
     sectors_for,
 )
-from pipeline.market_time import ET
+from pipeline.market_time import ET, compute_trading_day
 
 router = APIRouter(tags=["news"])
 
@@ -135,7 +135,10 @@ def pick_ids_for_window(db: Session, since: datetime | None, until: datetime | N
     ("last hour", a weekend) shows the latest brief's picks instead of none.
     """
     first = since.astimezone(ET).date() if since else None
-    last = (until or datetime.now(UTC)).astimezone(ET).date()
+    # The trading day the end of the range belongs to, not its calendar date: after the 4 PM ET
+    # close and over a weekend that is already the next session, which is the day the brief being
+    # written then is filed under. By the calendar, its picks went missing every evening.
+    last = compute_trading_day(until or datetime.now(UTC))
     stmt = select(Report.top_picks).where(Report.trading_day <= last)
     rows = db.execute(stmt.where(Report.trading_day >= first) if first else stmt).scalars().all()
     if not rows:

@@ -7,7 +7,7 @@ OnFailure=stocknews-notify@%n.service
 [Service]
 WorkingDirectory=@RELEASE@
 Environment=OMNIROUTE_SERVER_HOST=127.0.0.1
-Environment=PATH=@PATH@
+Environment="PATH=@PATH@"
 ExecStart=@OMNIROUTE@ serve --no-open
 Restart=on-failure
 # Stopping sends SIGTERM; exiting on it (code 143) is a normal stop, not a failure.

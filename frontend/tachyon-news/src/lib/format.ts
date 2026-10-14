@@ -93,6 +93,8 @@ export const fmtDateTime = (iso?: string | null) =>
 export function fmtDay(day?: string | null, opts: Intl.DateTimeFormatOptions = { weekday: 'long', month: 'long', day: 'numeric' }) {
   if (!day) return '—'
   const [y, m, d] = day.split('-').map(Number)
+  // Not a date (a mistyped link, say): show it as it is. Formatting an invalid date throws.
+  if (![y, m, d].every(Number.isFinite)) return day
   const key = JSON.stringify(opts)
   let f = dayFormats.get(key)
   if (!f) dayFormats.set(key, (f = new Intl.DateTimeFormat('en-US', { ...opts, timeZone: 'UTC' })))
@@ -100,6 +102,12 @@ export function fmtDay(day?: string | null, opts: Intl.DateTimeFormatOptions = {
 }
 
 export const etDayKey = (iso: string) => DAYKEY_ET.format(new Date(iso))
+
+/** Today's date in New York (YYYY-MM-DD), the calendar the briefs are dated by. */
+export const etToday = () => etDayKey(new Date().toISOString())
+
+/** Is a brief for today (or the next session, once the market has closed) rather than an earlier day? */
+export const isCurrentBrief = (tradingDay?: string | null) => Boolean(tradingDay && tradingDay >= etToday())
 
 export function etClock(d = new Date()) {
   return CLOCK_ET.format(d)

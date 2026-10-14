@@ -16,6 +16,10 @@ SERVICES=(stocknews-pipeline.service stocknews-backup.service stocknews-api stoc
 
 step() { printf '→ %s\n' "$*"; }
 
+# "Stopped" wins over anything already in flight: a make deploy that finishes after this installs
+# the new code but starts nothing while this marker exists (make up removes it).
+mkdir -p .run && touch .run/stopped
+
 if systemctl --user cat stocknews-api.service >/dev/null 2>&1; then
   if [ "$(systemctl --user show -p ActiveState --value stocknews-pipeline.service)" = activating ]; then
     step "Ending the pipeline run in progress"
@@ -45,13 +49,18 @@ if [ -e logs/.pipeline.lock ] && ! flock -n logs/.pipeline.lock true 2>/dev/null
   echo "! A pipeline run started by hand is still going; stop it with Ctrl-C in its terminal."
 fi
 
-sleep 1
-busy=""
-for port in 8080 3000 8000 20128 5432; do
-  if ss -ltn "sport = :$port" 2>/dev/null | grep -q LISTEN; then busy+=" $port"; fi
-done
+# Services can take a few seconds to let go of their ports.
+listening() {
+  local busy=()
+  for port in 8080 3000 8000 20128 5432; do
+    ss -ltn "sport = :$port" 2>/dev/null | grep -q LISTEN && busy+=("$port")
+  done
+  echo "${busy[*]}"
+}
+busy=$(listening)
+for _ in $(seq 15); do [ -z "$busy" ] && break; sleep 1; busy=$(listening); done
 if [ -n "$busy" ]; then
-  echo "! Still listening on port(s):$busy — check with: ss -ltnp | grep -E ':(${busy// /|})\b'"
+  echo "! Still listening on port(s): $busy — see what holds them: ss -ltnp | grep -E ':(${busy// /|})\b'"
   exit 1
 fi
 echo "✓ Stock-news is fully stopped and stays off after a reboot. Start it again with: make up"

@@ -17,7 +17,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-_PLACEHOLDER_MARKERS = ("CHANGEME", "your_", "ep-xxx")
+# "your-app": an earlier template's VERCEL_URL=https://your-app.vercel.app. Left in a .env, it was
+# added to the API's allowed origins, and that address is one anybody can register.
+_PLACEHOLDER_MARKERS = ("CHANGEME", "your_", "your-app", "ep-xxx")
 
 
 def _is_placeholder(value: str) -> bool:

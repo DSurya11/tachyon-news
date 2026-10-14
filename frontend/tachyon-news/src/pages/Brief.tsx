@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { BlurFade } from '@/components/ui/blur-fade'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Cite } from '@/components/app/Cite'
@@ -26,7 +26,9 @@ function useActiveSection(ids: string[]) {
 }
 
 export default function Brief() {
-  const { day } = useParams()
+  const { day: asked } = useParams()
+  // Only a real day is looked up; anything else in the address shows the latest brief.
+  const day = asked && /^\d{4}-\d{2}-\d{2}$/.test(asked) ? asked : undefined
   const navigate = useNavigate()
   const { data: report, isLoading } = useReport(day)
   const { data: history = [] } = useReports()
@@ -38,6 +40,7 @@ export default function Brief() {
   const headings = rendered?.headings ?? []
   const active = useActiveSection([...headings.map((h) => h.id), 'sources'])
 
+  if (asked && !day) return <Navigate to="/brief" replace />
   if (isLoading) {
     return <div className="mx-auto max-w-3xl space-y-4 pt-6">{[40, 80, 100, 95, 90, 60].map((w, i) => <div key={i} className="h-4 animate-pulse rounded bg-muted" style={{ width: `${w}%` }} />)}</div>
   }

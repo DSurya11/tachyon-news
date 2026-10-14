@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -210,5 +211,7 @@ def test_deploy_never_stops_everything():
 
     makefile = (PROJECT_ROOT / "Makefile").read_text()
     recipe = makefile.split("\ninstall-services:", 1)[1].split("\n\n", 1)[0]
-    assert "dev-down" in recipe
-    assert " down " not in recipe.replace("dev-down", "") and "stop.sh" not in recipe
+    # The targets the recipe runs, not its messages: those do mention "make down".
+    runs = re.findall(r"\$\(MAKE\)[^\n;|&]*", recipe)
+    assert any("dev-down" in call for call in runs)
+    assert not any(re.search(r"(?<!dev-)\bdown\b", call) for call in runs) and "stop.sh" not in recipe

@@ -210,18 +210,24 @@ install-services: ## Install/refresh the systemd user units (after a release)
 		    -e "s|@OMNIROUTE@|$$(command -v omniroute)|g" -e "s|@PATH@|$$PATH|g" $$f > $(SYSTEMD_DIR)/$$(basename $$f); \
 	done
 	@systemctl --user daemon-reload
-	@systemctl --user enable --now $(TIMERS) >/dev/null 2>&1
-	@systemctl --user enable $(SERVICES) >/dev/null 2>&1
+	@# After make down, nothing starts until make up (a deploy only installs the new code).
+	@if [ -f $(RUN_DIR)/stopped ]; then echo "→ make down is in effect: units installed, nothing started (make up starts it)"; \
+	 else systemctl --user enable --now $(TIMERS) >/dev/null 2>&1; systemctl --user enable $(SERVICES) >/dev/null 2>&1; fi
 	@if crontab -l 2>/dev/null | grep -q 'stock-news-pipeline'; then crontab -l | grep -v 'stock-news-pipeline' | crontab -; fi
 	@echo "✓ systemd units installed: hourly pipeline + daily backup timers; services start at login (old cron job removed)"
 
 deploy: release install-services ## Production: test, snapshot, then (re)start everything under systemd
-	@systemctl --user restart $(SERVICES)
+	@# After make down, a deploy installs the new code and starts nothing. Every line below checks
+	@# the marker for itself: each recipe line is its own shell, so an "exit 0" on one line cannot
+	@# end the recipe (it went on to wait for an API that was not started, and failed).
+	@if [ -f $(RUN_DIR)/stopped ]; then echo "✓ Deployed (not started: make down is in effect; make up starts it)"; \
+	 else systemctl --user restart $(SERVICES); fi
 	@# Healthy means the API can read the database too (/health is 503 without it).
-	@for i in $$(seq 30); do curl -sf http://127.0.0.1:$(BACKEND_PORT)/health >/dev/null 2>&1 && break; sleep 1; done; \
+	@[ -f $(RUN_DIR)/stopped ] || { \
+	 for i in $$(seq 30); do curl -sf http://127.0.0.1:$(BACKEND_PORT)/health >/dev/null 2>&1 && break; sleep 1; done; \
 	 curl -sf http://127.0.0.1:$(BACKEND_PORT)/health >/dev/null 2>&1 \
-	 || { echo "✗ Deployed, but the API isn't healthy (database down?): make up, then make doctor"; exit 1; }
-	@echo "✓ Deployed. Dashboard http://localhost:$(FRONTEND_PORT) · make doctor · make journal"
+	 || { echo "✗ Deployed, but the API isn't healthy (database down?): make up, then make doctor"; exit 1; }; }
+	@[ -f $(RUN_DIR)/stopped ] || echo "✓ Deployed. Dashboard http://localhost:$(FRONTEND_PORT) · make doctor · make journal"
 
 undeploy: ## Stop and remove the systemd units (release and backups stay; make dev-up for development)
 	-@systemctl --user disable --now $(TIMERS) $(SERVICES) >/dev/null 2>&1

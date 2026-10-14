@@ -42,6 +42,8 @@ if cmp -s .env .env.example; then
   die "Fill in .env first (template copied; see README → Configuration), then run make up again."
 fi
 
+rm -f .run/stopped   # make down's "stay stopped" marker: up means up
+
 # 1. Docker and Postgres ---------------------------------------------------------------------------
 if ! docker info >/dev/null 2>&1; then
   step "Starting Docker (asks for your password)"
