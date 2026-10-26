@@ -144,12 +144,21 @@ def test_dashboard_sign_up_browse_and_sign_out(browser, servers, seeded):
     assert errors == []
 
 
-def test_dashboard_without_an_api_offers_demo_data(browser, servers):
+def test_dashboard_without_an_api_falls_back_to_demo_data(browser, servers):
+    # The laptop that runs the API is off: a visitor gets the demo data, not a sign-in that cannot work.
     page = browser.new_page()
     base = servers.split("?")[0]
     page.goto(base + "?api=http://127.0.0.1:9#/")  # nothing listens on port 9
-    page.wait_for_selector("text=Can't reach the server")
-    page.goto(base + "?demo=1#/")
+    page.wait_for_selector("text=Showing sample data.")
+    page.wait_for_selector("text=The live data is offline right now")
+    page.wait_for_selector("#main h1")
+    assert "/login" not in page.url
+
+
+def test_sign_in_offers_the_demo_to_visitors(browser, servers):
+    page = browser.new_page()
+    page.goto(servers + "#/")
+    page.get_by_role("link", name="Explore with sample data").click()
     page.wait_for_selector("text=Showing sample data.")
     page.wait_for_selector("#main h1")
 

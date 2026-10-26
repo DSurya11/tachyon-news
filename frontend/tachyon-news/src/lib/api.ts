@@ -29,8 +29,8 @@ async function fail(res: Response, path: string): Promise<never> {
   throw new HttpError(res.status, path, typeof detail === 'string' ? detail : undefined)
 }
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(config.apiUrl + path, { headers: headers() })
+async function get<T>(path: string, timeoutMs?: number): Promise<T> {
+  const res = await fetch(config.apiUrl + path, { headers: headers(), signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined })
   if (res.status === 401 && session.token) session.set(null) // expired or revoked: back to sign-in
   if (!res.ok) await fail(res, path)
   return res.json() as Promise<T>
@@ -75,6 +75,8 @@ function qs(w: Window, extra: Record<string, string | number | boolean | undefin
   for (const [k, v] of Object.entries(extra)) if (v !== undefined && v !== null && v !== '' && v !== false) p.set(k, String(v))
   return p.toString()
 }
+
+const FIRST_CONTACT_MS = 8_000
 
 const quoteCache = new Map<string, { at: number; value: Quote | null }>() // key: `${currency}:${symbol}`
 const QUOTE_TTL = 60_000
@@ -203,11 +205,16 @@ export const api = {
 
   clearQuoteCache: () => quoteCache.clear(),
 
+  /** The live API could not be reached on arrival: show the demo data for this visit instead. */
+  fallBackToDemo: () => setDemo(true),
+
   /** Ask the news: the agent's answer with the stories it cites. Live only: demo data has no agent. */
   ask: (question: string) => post<AskResult>('/ask', { question }),
 
   // Accounts ------------------------------------------------------------------
-  authConfig: () => get<AuthConfig>('/auth/config'),
+  // A time limit: with the laptop off, the tunnel can hang instead of failing, and a visitor would
+  // wait on a blank sign-in page.
+  authConfig: () => get<AuthConfig>('/auth/config', FIRST_CONTACT_MS),
   me: () => get<User>('/auth/me'),
   login: (email: string, password: string) => post<AuthResult>('/auth/login', { email, password }),
   signup: (email: string, password: string, name?: string) => post<AuthResult>('/auth/signup', { email, password, name }),
