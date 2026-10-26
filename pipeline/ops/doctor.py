@@ -9,6 +9,7 @@ to fix what isn't right. Exit code 1 when anything is broken.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -42,11 +43,22 @@ def _age(ts: datetime) -> str:
     return f"{minutes} min ago" if minutes < 120 else f"{minutes // 60} h ago"
 
 
+PLACEHOLDER = re.compile(r"<[^>]*>|\bpaste\b|changeme|your[_-]", re.I)
+
+
 def check_env() -> Check:
     env = PROJECT_ROOT / ".env"
-    if env.exists():
-        return Check(".env", OK, str(env))
-    return Check(".env", FAIL, "missing", "cp .env.example .env and fill it in")
+    if not env.exists():
+        return Check(".env", FAIL, "missing", "cp .env.example .env and fill it in")
+    # A template value left in place (ASK_API_KEY=<copy …> broke Ask on 2026-10-26).
+    unfilled = []
+    for line in env.read_text(encoding="utf-8").splitlines():
+        name, sep, value = line.partition("=")
+        if sep and not line.lstrip().startswith("#") and PLACEHOLDER.search(value):
+            unfilled.append(name.strip())
+    if unfilled:
+        return Check(".env", WARN, f"placeholder value in {', '.join(unfilled)}", "put the real values in .env")
+    return Check(".env", OK, str(env))
 
 
 def check_database() -> Check:
@@ -67,15 +79,41 @@ def check_omniroute() -> Check:
     url = settings.omniroute_api_url.rstrip("/") + "/models"
     try:
         resp = httpx.get(url, headers={"Authorization": f"Bearer {settings.omniroute_api_key}"}, timeout=5)
-        resp.raise_for_status()
-        models = {m.get("id") for m in resp.json().get("data", [])}
     except Exception as exc:  # noqa: BLE001
         return Check("OmniRoute", FAIL, f"unreachable at {settings.omniroute_api_url} ({exc.__class__.__name__})",
                      "make up")
+    if resp.status_code in (401, 403):
+        return Check("OmniRoute", FAIL, f"key rejected ({resp.status_code})", "OMNIROUTE_API_KEY in .env")
+    try:
+        resp.raise_for_status()
+        models = {m.get("id") for m in resp.json().get("data", [])}
+    except Exception as exc:  # noqa: BLE001
+        return Check("OmniRoute", FAIL, f"answered {resp.status_code} at {settings.omniroute_api_url} "
+                     f"({exc.__class__.__name__})", "make up")
     if models and settings.omniroute_model not in models:
         return Check("OmniRoute", WARN, f"running, but model '{settings.omniroute_model}' is not listed",
                      "create the combo in the OmniRoute dashboard (:20128)")
     return Check("OmniRoute", OK, f"running, {len(models)} models")
+
+
+def check_ask() -> Check:
+    """Ask the news: the model endpoint answers, accepts the key and offers ASK_MODEL."""
+    base = (settings.ask_api_url or settings.omniroute_api_url).rstrip("/")
+    key = settings.ask_api_key or settings.omniroute_api_key
+    try:
+        resp = httpx.get(base + "/models", headers={"Authorization": f"Bearer {key}"}, timeout=5)
+    except Exception as exc:  # noqa: BLE001
+        return Check("Ask model", FAIL, f"unreachable at {base} ({exc.__class__.__name__})",
+                     "start the router ASK_API_URL points at")
+    if resp.status_code in (401, 403):
+        return Check("Ask model", FAIL, f"key rejected ({resp.status_code}) at {base}", "ASK_API_KEY in .env")
+    if resp.status_code != 200:
+        return Check("Ask model", FAIL, f"{base} answered {resp.status_code}", "")
+    models = {m.get("id") for m in resp.json().get("data", [])}
+    if models and settings.ask_model not in models:
+        return Check("Ask model", FAIL, f"no model '{settings.ask_model}' at {base}",
+                     "create that combo, or set ASK_MODEL to one that exists")
+    return Check("Ask model", OK, f"{settings.ask_model} at {base}")
 
 
 def check_neon() -> Check:
@@ -213,7 +251,7 @@ def check_release() -> Check:
 
 
 CHECKS: list[Callable[[], Check]] = [
-    check_env, check_database, check_omniroute, check_neon, check_report_providers, check_quotes,
+    check_env, check_database, check_omniroute, check_ask, check_neon, check_report_providers, check_quotes,
     check_scheduler, check_last_run, check_services, check_public, check_disk, check_release,
 ]
 

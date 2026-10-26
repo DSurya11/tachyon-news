@@ -204,3 +204,38 @@ def test_deploy_never_stops_everything():
     runs = re.findall(r"\$\(MAKE\)[^\n;|&]*", recipe)
     assert any("dev-down" in call for call in runs)
     assert not any(re.search(r"(?<!dev-)\bdown\b", call) for call in runs) and "stop.sh" not in recipe
+
+
+# ── doctor: configuration that fails quietly (2026-10-26: ASK_API_KEY was still "<copy …>") ──
+
+def test_doctor_flags_a_placeholder_left_in_env(monkeypatch, tmp_path):
+    (tmp_path / ".env").write_text("OMNIROUTE_API_URL=http://localhost:20128/v1\n"
+                                   "# ASK_API_KEY=<a comment is fine>\n"
+                                   "ASK_API_KEY=<copy OMNIROUTE_API_KEY from job-finder/.env>\n")
+    monkeypatch.setattr(doctor, "PROJECT_ROOT", tmp_path)
+    check = doctor.check_env()
+    assert check.status == doctor.WARN and "ASK_API_KEY" in check.detail
+
+
+def _models(status: int, ids=("agent-combo",)):
+    import httpx
+    return lambda *a, **k: httpx.Response(status, json={"data": [{"id": i} for i in ids]})
+
+
+def test_doctor_ask_says_the_key_was_rejected(monkeypatch):
+    monkeypatch.setattr(doctor.httpx, "get", _models(401))
+    check = doctor.check_ask()
+    assert check.status == doctor.FAIL and "key rejected" in check.detail and "ASK_API_KEY" in check.hint
+
+
+def test_doctor_ask_needs_the_configured_model(monkeypatch):
+    monkeypatch.setattr(settings, "ask_model", "ask-combo")
+    monkeypatch.setattr(doctor.httpx, "get", _models(200, ids=("extraction-combo",)))
+    assert "no model 'ask-combo'" in doctor.check_ask().detail
+    monkeypatch.setattr(doctor.httpx, "get", _models(200, ids=("ask-combo",)))
+    assert doctor.check_ask().status == doctor.OK
+
+
+def test_doctor_omniroute_tells_a_rejected_key_from_a_stopped_router(monkeypatch):
+    monkeypatch.setattr(doctor.httpx, "get", _models(401))
+    assert "key rejected" in doctor.check_omniroute().detail
