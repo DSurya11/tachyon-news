@@ -25,6 +25,11 @@ writes a cited daily brief, and serves it all through an API to the **Tachyon Ne
   once enough history has built up, what similar stories (same event type and sentiment) were followed by: the
   usual move and how often the first-day move kept going or faded. History, never a forecast.
 - Watchlist, search (Ctrl K), US / India / all markets, prices in local currency, USD or INR, dark and light themes.
+- **Ask the news** (key `5`): a question in plain words ("bank stocks with negative news this week and how they
+  moved", "what happened with Tata Motors") answered by an agent with read-only tools over the stories, the stored
+  prices and the after-story moves. Code checks the answer before it is shown: every cited story came from its own
+  searches, every percentage is one a tool computed (else it is refused once, then flagged), no buy / sell advice;
+  code adds how many cited stories are unverified and how old the data is. `backend/ask.py`, `backend/ask_tools.py`.
 
 | Stage | What it does |
 |---|---|
@@ -227,6 +232,7 @@ Interactive docs at `/docs`. Everything except `/health` and `/auth/*` needs `Au
 | `GET /candles/{symbol}?days=30&currency=native|USD|INR` | Stored daily closes (sparklines); converted closes use each day's own rate, and a chart is never mixed across currencies. |
 | `GET /chart/{symbol}?span=1d|5d|1m|3m|6m|1y|5y&currency=…` | Price history for one chart span, fetched from Yahoo on demand and cached: 5-minute bars for 1D (US listings include pre-market and after-hours; `base` is the previous close), 15-minute for 5D, daily to 1Y, weekly for 5Y. Falls back to the stored closes (`source: "stored"`). |
 | `GET /stats` | Article counts by status. |
+| `POST /ask` | `{"question": "..."}` (≤ 300 characters) → the agent's `answer`, the cited `stories` (same shape as `/news`), `total_matching`, `unchecked` figures and the tool `steps`. Signed in; `ASK_PER_USER_HOUR` (10) a user an hour and `ASK_DAILY_TOTAL` (200) a day for everyone; a repeated question within 10 minutes gets the stored answer. |
 
 ## Development
 

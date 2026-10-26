@@ -152,3 +152,33 @@ def test_dashboard_without_an_api_offers_demo_data(browser, servers):
     page.goto(base + "?demo=1#/")
     page.wait_for_selector("text=Showing sample data.")
     page.wait_for_selector("#main h1")
+
+
+def test_ask_page_shows_the_answer_and_its_stories(browser, servers, seeded, monkeypatch):
+    import os
+
+    from backend import ask
+
+    nvidia = seeded[0]
+    monkeypatch.setattr(ask, "ask", lambda question, db: ask.Result(
+        answer="Nvidia beat estimates; the stock rose 8% over the period.", story_ids=[nvidia.id],
+        stopped="answered", total_matching=1, unchecked=["8%"],
+        steps=[{"kind": "tool", "tool": "search_stories", "arguments": '{"ticker": "NVDA"}', "failed": False}]))
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(servers + "#/signup")
+    page.fill("input[type=email]", "asker@example.com")
+    page.fill("input[autocomplete=new-password]", "correct horse")
+    page.get_by_role("button", name="Create account").click()
+    page.wait_for_selector("#main h1")
+
+    page.keyboard.press("5")
+    page.get_by_label("Your question").fill("What happened with Nvidia?")
+    page.get_by_role("button", name="Ask", exact=True).click()
+    page.wait_for_selector("text=Nvidia beat estimates; the stock rose 8%")
+    assert "Nvidia beats estimates" in page.inner_text("#main")       # the cited story, as a wire row
+    assert "Not found in the data, check before relying on: 8%" in page.inner_text("#main")
+    if shots := os.getenv("SCREENSHOTS"):
+        page.screenshot(path=f"{shots}/ask.png", full_page=True)
+    assert errors == []

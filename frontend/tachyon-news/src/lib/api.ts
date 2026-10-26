@@ -6,7 +6,7 @@
 import { config } from './config'
 import { mock } from './mock'
 import { session } from './session'
-import type { Article, ArticleDetail, AuthConfig, AuthResult, Candles, Chart, Reaction, Span, Health, Market, NewsFilters, NewsPage, Quote, Report, ReportSummary, Summary, User, Window } from './types'
+import type { Article, ArticleDetail, AskResult, AuthConfig, AuthResult, Candles, Chart, Reaction, Span, Health, Market, NewsFilters, NewsPage, Quote, Report, ReportSummary, Summary, User, Window } from './types'
 
 export class HttpError extends Error {
   status: number
@@ -202,6 +202,9 @@ export const api = {
   },
 
   clearQuoteCache: () => quoteCache.clear(),
+
+  /** Ask the news: the agent's answer with the stories it cites. Live only: demo data has no agent. */
+  ask: (question: string) => post<AskResult>('/ask', { question }),
 
   // Accounts ------------------------------------------------------------------
   authConfig: () => get<AuthConfig>('/auth/config'),

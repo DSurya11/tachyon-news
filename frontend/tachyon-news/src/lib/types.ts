@@ -200,3 +200,16 @@ export interface NewsFilters {
   market?: Market
 }
 export interface NewsPage { page: number; total: number; has_more: boolean; articles: Article[] }
+
+export interface AskStep { kind: 'model' | 'tool' | 'answer' | 'error'; tool?: string; arguments?: string; failed?: boolean; model?: string }
+export interface AskResult {
+  answer: string
+  stories: Article[]
+  stopped: 'answered' | 'step_limit' | 'token_budget' | 'error'
+  total_matching: number | null
+  unchecked: string[]
+  steps: AskStep[]
+  tokens: number
+  seconds: number
+  cached: boolean
+}

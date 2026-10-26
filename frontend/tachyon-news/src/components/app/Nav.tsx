@@ -97,7 +97,7 @@ export function Sidebar() {
 export function MobileNav() {
   const { pathname } = useLocation()
   return (
-    <nav aria-label="Views" className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t bg-background pb-[env(safe-area-inset-bottom)] lg:hidden">
+    <nav aria-label="Views" className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t bg-background pb-[env(safe-area-inset-bottom)] lg:hidden">
       {NAV.map(({ to, short, icon: Icon }) => {
         const on = isActive(pathname, to)
         return (

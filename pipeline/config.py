@@ -114,6 +114,13 @@ class Settings(BaseSettings):
         description="Send response_format=json_object. Disabled automatically if the router rejects it.",
     )
 
+    # Ask the news (backend/ask.py): an agent with tool calls, so a combo of models that do them.
+    ask_api_url: str = Field(default="", description="OpenAI-compatible endpoint for Ask (default: OMNIROUTE_API_URL).")
+    ask_api_key: str = Field(default="", description="Key for that endpoint (default: OMNIROUTE_API_KEY).")
+    ask_model: str = Field(default="ask-combo", description="A combo of tool-calling models, e.g. gpt-oss-120b → gpt-oss-20b.")
+    ask_per_user_hour: int = Field(default=10, description="Ask questions one account may send per hour.")
+    ask_daily_total: int = Field(default=200, description="Ask questions all accounts together may send per day.")
+
     # ------------------------------------------------------------------
     # Extraction
     # ------------------------------------------------------------------
