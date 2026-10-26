@@ -27,7 +27,7 @@ export PYTHONPATH := $(CURDIR)
         run-pipeline run-report sync-full claude-login \
         dev-backend frontend-install dev-frontend build-frontend dev-frontend-classic \
         up down dev-up dev-down status logs \
-        test test-unit test-integration test-e2e coverage lint format \
+        test test-unit test-integration test-e2e coverage ask-eval lint format \
         release deploy install-services undeploy restart stop start journal doctor backup restore \
         setup-scheduler remove-scheduler clean
 
@@ -167,6 +167,9 @@ test-e2e: ## Full simulated pipeline run
 
 coverage: ## Tests with a coverage report (htmlcov/)
 	$(PYTEST) -q --cov --cov-report=term-missing --cov-report=html
+
+ask-eval: ## Ask the news on evals/ask_cases.yaml with real models (needs db-up and OmniRoute)
+	$(PY) -m backend.ask_evals
 
 lint: ## Ruff
 	$(RUFF) check pipeline backend tests

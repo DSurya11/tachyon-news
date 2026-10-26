@@ -19,7 +19,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from backend.auth import current_user
 from backend.db import auth_engine
-from backend.routers import auth, health, news, quotes, reports
+from backend.routers import ask, auth, health, news, quotes, reports
 from pipeline.config import settings
 from pipeline.db.models import User, UserSession
 
@@ -99,3 +99,4 @@ app.include_router(auth.router)
 app.include_router(news.router, dependencies=signed_in)
 app.include_router(reports.router, dependencies=signed_in)
 app.include_router(quotes.router, dependencies=signed_in)
+app.include_router(ask.router)  # signs in itself: its limits are per account

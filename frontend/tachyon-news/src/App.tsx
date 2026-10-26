@@ -38,12 +38,13 @@ const Overview = lazyPage(() => import('@/pages/Overview'))
 const Wire = lazyPage(() => import('@/pages/Wire'))
 const Brief = lazyPage(() => import('@/pages/Brief'))
 const Watchlist = lazyPage(() => import('@/pages/Watchlist'))
+const Ask = lazyPage(() => import('@/pages/Ask'))
 
 /** Fetch the other pages' code once the first one is up, so switching never waits on the network. */
 function usePrefetchPages() {
   useEffect(() => {
     const idle = window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 1200))
-    idle(() => [Overview, Wire, Brief, Watchlist].forEach((p) => void p.preload()))
+    idle(() => [Overview, Wire, Brief, Watchlist, Ask].forEach((p) => void p.preload()))
   }, [])
 }
 
@@ -54,7 +55,7 @@ function Hotkeys() {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return
       if ((e.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return
-      const to = { '1': '/', '2': '/wire', '3': '/brief', '4': '/watchlist' }[e.key]
+      const to = { '1': '/', '2': '/wire', '3': '/brief', '4': '/watchlist', '5': '/ask' }[e.key]
       if (to) navigate(to)
       if (e.key === 't') setTheme(resolved === 'dark' ? 'light' : 'dark')
     }
@@ -86,7 +87,7 @@ function Shell() {
   const section = location.pathname.split('/')[1] || 'overview'
   usePrefetchPages()
   useEffect(() => {
-    const titles: Record<string, string> = { overview: 'Overview', wire: 'The wire', brief: 'Daily brief', watchlist: 'Watchlist' }
+    const titles: Record<string, string> = { overview: 'Overview', wire: 'The wire', brief: 'Daily brief', watchlist: 'Watchlist', ask: 'Ask the news' }
     document.title = `${titles[section] ?? 'Tachyon News'} — Tachyon News`
   }, [section])
   // Opening a page starts at its top; back/forward keeps the browser's own scroll restoration.
@@ -116,6 +117,7 @@ function Shell() {
                 <Route path="/brief" element={<Brief />} />
                 <Route path="/brief/:day" element={<Brief />} />
                 <Route path="/watchlist" element={<Watchlist />} />
+                <Route path="/ask" element={<Ask />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
               </Suspense>
