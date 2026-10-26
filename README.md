@@ -95,7 +95,7 @@ seen from outside (`PUBLIC_API_URL`, `PUBLIC_SITE_URL` in `.env`). `make down` s
 | **Hourly pipeline** | systemd user timer `stocknews-pipeline.timer`. `Persistent=true`: a run missed while the laptop slept happens as soon as it wakes. Replaces the old cron job. |
 | **OmniRoute, API (:8080), dashboard (:3000)** | systemd user services: start at boot (lingering, set by `make up`), restart if they crash. |
 | **Postgres** | Docker with `restart: unless-stopped`. |
-| **Backups** | `stocknews-backup.timer`: a daily `pg_dump` (run inside the container) to `~/.local/share/stock-news-pipeline/backups`, newest 14 kept. `make restore FILE=…` takes a safety dump first. |
+| **Backups** | On demand only (the daily timer was removed 2026-10-26): `make backup` runs a `pg_dump` inside the container to `~/.local/share/stock-news-pipeline/backups`, newest 14 kept. `make restore FILE=…` takes a safety dump first. |
 | **Alerts** | A desktop notification when a stage fails twice in a row, when it recovers, when a run crashes or the database is unreachable, and when a service or backup fails. Optionally `ALERT_WEBHOOK_URL` (e.g. an [ntfy.sh](https://ntfy.sh) topic for phone pushes) and `HEALTHCHECK_URL` (a dead-man's switch that notices when runs stop). |
 | **Claude.ai login** | Scheduled runs never wait for a login: when the session expires, the report falls back to the next provider and the doctor tells you to `make claude-login`. |
 

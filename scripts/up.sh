@@ -6,8 +6,7 @@
 # - first run: make setup (venv, dependencies, browser, .env), then stops so .env can be filled in
 # - Docker and the Postgres container (data kept between runs), tables created or upgraded
 # - the production services under systemd: OmniRoute, the API (:8080), the local dashboard (:3000)
-# - the hourly pipeline and daily backup timers (a run missed while the laptop was off or asleep
-#   starts straight away)
+# - the hourly pipeline timer (a run missed while the laptop was off or asleep starts straight away)
 # - installs everything first (tests, build, snapshot: make deploy) if it was never deployed
 # - keeps the services running without a login session, so they come back after a reboot
 # - the Tailscale Funnel the hosted dashboard reaches the API through
@@ -19,7 +18,7 @@ cd "$(dirname "$(readlink -f "$0")")/.."
 
 API_PORT=8080
 DASH_PORT=3000
-TIMERS=(stocknews-pipeline.timer stocknews-backup.timer)
+TIMERS=(stocknews-pipeline.timer)
 SERVICES=(stocknews-omniroute stocknews-api stocknews-dashboard)
 
 step() { printf '→ %s\n' "$*"; }
@@ -62,7 +61,7 @@ if ! systemctl --user cat stocknews-api.service >/dev/null 2>&1 || [ ! -f "$HOME
 fi
 
 # 3. Services and timers ---------------------------------------------------------------------------
-step "OmniRoute, API, dashboard, hourly pipeline and daily backup"
+step "OmniRoute, API, dashboard and hourly pipeline"
 systemctl --user enable --now "${SERVICES[@]}" "${TIMERS[@]}" >/dev/null 2>&1 \
   || die "systemd could not start the services: systemctl --user status 'stocknews-*'"
 for svc in "${SERVICES[@]}"; do   # anything that had crashed gets another go

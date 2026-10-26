@@ -18,7 +18,7 @@ DEPLOY_DIR   ?= $(HOME)/.local/share/stock-news-pipeline
 RELEASE_DIR  := $(DEPLOY_DIR)/release
 SYSTEMD_DIR  := $(HOME)/.config/systemd/user
 SERVICES     := stocknews-omniroute stocknews-api stocknews-dashboard
-TIMERS       := stocknews-pipeline.timer stocknews-backup.timer
+TIMERS       := stocknews-pipeline.timer
 PG_CONTAINER := stocknews-postgres
 export PYTHONPATH := $(CURDIR)
 
@@ -217,7 +217,7 @@ install-services: ## Install/refresh the systemd user units (after a release)
 	@if [ -f $(RUN_DIR)/stopped ]; then echo "→ make down is in effect: units installed, nothing started (make up starts it)"; \
 	 else systemctl --user enable --now $(TIMERS) >/dev/null 2>&1; systemctl --user enable $(SERVICES) >/dev/null 2>&1; fi
 	@if crontab -l 2>/dev/null | grep -q 'stock-news-pipeline'; then crontab -l | grep -v 'stock-news-pipeline' | crontab -; fi
-	@echo "✓ systemd units installed: hourly pipeline + daily backup timers; services start at login (old cron job removed)"
+	@echo "✓ systemd units installed: hourly pipeline timer; services start at login (old cron job removed)"
 
 deploy: release install-services ## Production: test, snapshot, then (re)start everything under systemd
 	@# After make down, a deploy installs the new code and starts nothing. Every line below checks
@@ -253,7 +253,7 @@ journal: ## Follow the production logs (all stocknews units)
 doctor: ## Check the whole setup and say how to fix what's wrong
 	@$(PY) -m pipeline.ops.doctor
 
-backup: ## Dump the local database now (the timer does this daily)
+backup: ## Dump the local database now (no timer: run it when you want a backup)
 	@$(PY) -m pipeline.ops.backup
 
 restore: ## Restore a dump, replacing the local database: make restore FILE=<dump>

@@ -189,20 +189,6 @@ def check_public() -> Check:
     return Check("public access", OK, " · ".join(u for u in (settings.public_site_url, settings.public_api_url) if u))
 
 
-def check_backups() -> Check:
-    from pipeline.ops.backup import list_backups
-
-    dumps = list_backups()
-    if not dumps:
-        return Check("backups", FAIL, "no database dumps yet", "make backup")
-    newest = dumps[-1]
-    ts = datetime.fromtimestamp(newest.stat().st_mtime, UTC)
-    age = datetime.now(UTC) - ts
-    status = OK if age < timedelta(hours=36) else WARN if age < timedelta(days=3) else FAIL
-    return Check("backups", status, f"{len(dumps)} dumps, newest {_age(ts)} ({newest.name})",
-                 "make backup; make deploy installs the daily timer" if status != OK else "")
-
-
 def check_disk() -> Check:
     free_gb = shutil.disk_usage(Path.home()).free / 1e9
     status = OK if free_gb > 5 else WARN if free_gb > 1 else FAIL
@@ -228,7 +214,7 @@ def check_release() -> Check:
 
 CHECKS: list[Callable[[], Check]] = [
     check_env, check_database, check_omniroute, check_neon, check_report_providers, check_quotes,
-    check_scheduler, check_last_run, check_services, check_public, check_backups, check_disk, check_release,
+    check_scheduler, check_last_run, check_services, check_public, check_disk, check_release,
 ]
 
 
