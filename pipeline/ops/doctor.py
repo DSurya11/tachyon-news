@@ -198,11 +198,16 @@ def check_last_run() -> Check:
     return Check("last run", status, detail, "journalctl --user -u stocknews-pipeline -e" if status != OK else "")
 
 
-def _http_ok(url: str) -> bool:
+def _http_ok(url: str, timeout: float = 5) -> bool:
     try:
-        return httpx.get(url, timeout=5).status_code < 500
+        return httpx.get(url, timeout=timeout).status_code < 500
     except httpx.HTTPError:
         return False
+
+
+# Measured 2026-10-26: from this laptop the Funnel URL took 3 to 17 s (the API itself ~10 ms), and
+# the 5 s limit reported a working tunnel as down. Same limit as the dashboard's first contact.
+PUBLIC_TIMEOUT_S = 20
 
 
 def check_services() -> Check:
@@ -220,7 +225,7 @@ def check_public() -> Check:
         return Check("public access", WARN, "PUBLIC_API_URL / PUBLIC_SITE_URL not set: the hosted dashboard isn't checked", "")
     down = [f"{name} ({url})" for name, url in (("tunnel", f"{settings.public_api_url.rstrip('/')}/health"),
                                                 ("site", settings.public_site_url))
-            if url and url != "/health" and not _http_ok(url)]
+            if url and url != "/health" and not _http_ok(url, PUBLIC_TIMEOUT_S)]
     if down:
         return Check("public access", FAIL, f"not reachable: {', '.join(down)}",
                      "tailscale up; tailscale funnel --bg 8080 (make up does both)")
