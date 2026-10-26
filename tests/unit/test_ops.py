@@ -139,17 +139,6 @@ def test_a_failed_dump_leaves_nothing_behind(monkeypatch, tmp_path, payload, cod
 
 # ── doctor ─────────────────────────────────────────────────────────────────────
 
-def test_doctor_backup_age(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "backup_dir", str(tmp_path))
-    assert doctor.check_backups().status == doctor.FAIL
-    dump = tmp_path / "stocknews-20260101-000000.dump"
-    dump.write_bytes(b"x")
-    assert doctor.check_backups().status == doctor.OK
-    old = time.time() - 5 * 86400
-    os.utime(dump, (old, old))
-    assert doctor.check_backups().status == doctor.FAIL
-
-
 def test_doctor_release_notices_undeployed_changes(monkeypatch, tmp_path):
     monkeypatch.setattr(doctor, "DEPLOY_DIR", tmp_path)
     assert doctor.check_release().status == doctor.WARN  # nothing deployed

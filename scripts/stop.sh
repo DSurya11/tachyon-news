@@ -4,15 +4,15 @@
 #   scripts/stop.sh        (or: make down / make stop)
 #
 # - ends a pipeline run in progress cleanly (the next run picks up where it left off)
-# - stops the hourly pipeline and daily backup timers
+# - stops the hourly pipeline timer
 # - stops OmniRoute, the API and the dashboard (systemd services and `make dev-up` ones)
 # - stops the Postgres container (data is kept)
 # - turns off start-at-login, so nothing comes back after a reboot until make up
 set -uo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
 
-TIMERS=(stocknews-pipeline.timer stocknews-backup.timer)
-SERVICES=(stocknews-pipeline.service stocknews-backup.service stocknews-api stocknews-dashboard stocknews-omniroute)
+TIMERS=(stocknews-pipeline.timer)
+SERVICES=(stocknews-pipeline.service stocknews-api stocknews-dashboard stocknews-omniroute)
 
 step() { printf '→ %s\n' "$*"; }
 
