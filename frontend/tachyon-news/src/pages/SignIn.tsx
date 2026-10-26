@@ -169,6 +169,9 @@ export default function SignIn({ mode }: { mode: Mode }) {
               {signup ? 'Sign in' : 'Create an account'}
             </Link>
           </p>
+          <p className="mt-2 text-center text-[13.5px] text-muted-foreground">
+            Just looking? <a href="?demo=1#/" className="font-medium text-foreground underline-offset-4 hover:underline">Explore with sample data</a>
+          </p>
         </div>
         <p className="text-center text-xs text-muted-foreground">Written by AI from public news. It can be wrong. Not investment advice.</p>
       </main>

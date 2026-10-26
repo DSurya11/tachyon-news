@@ -9,7 +9,8 @@ import type { AuthConfig, AuthResult, User } from '@/lib/types'
  * checking   — validating a saved session with the API
  * signed-in  — `user` is set; data calls carry the token
  * signed-out — show sign-in (`offline` when the API can't be reached)
- * demo       — no API configured / `?demo=1`: the built-in demo data, no account needed
+ * demo       — no API configured / `?demo=1`, or the API was unreachable on arrival (the laptop
+ *              that runs it is off): the built-in demo data, no account needed
  */
 export type AuthStatus = 'checking' | 'signed-in' | 'signed-out' | 'demo'
 
@@ -42,6 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let alive = true
     let timer: ReturnType<typeof setTimeout> | undefined
     let failures = 0
+    let reached = false   // the API has answered at least once during this visit
     const retryLater = () => {
       clearTimeout(timer)
       timer = setTimeout(attempt, Math.min(30_000, 2_000 * 2 ** failures++))
@@ -51,6 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       api.authConfig()
         .then((c) => {
           if (!alive) return
+          reached = true
           setOptions(c)
           setOffline(false)
           failures = 0
@@ -64,6 +67,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         })
         .catch((err) => {
           if (!alive || err instanceof HttpError) return
+          if (!reached) {
+            // Unreachable on arrival: the live data's laptop is off. Show the demo data rather
+            // than a sign-in page that cannot work. A blip after it has answered keeps retrying.
+            api.fallBackToDemo()
+            setStatus('demo')
+            return
+          }
           setOffline(true)
           setStatus((st) => (st === 'checking' ? 'signed-out' : st))
           retryLater()

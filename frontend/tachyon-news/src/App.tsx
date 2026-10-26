@@ -74,7 +74,7 @@ function DemoBanner() {
       <span className="font-medium">Showing sample data.</span>{' '}
       <span className="text-muted-foreground">
         {config.apiUrl
-          ? <>Can't reach your API at <span className="num">{config.apiUrl}</span> — the laptop may be off or asleep, or the browser blocked it (Chrome on a Tailscale device: allow "Local network access" for this site). Reload once it's back.</>
+          ? <>The live data is offline right now: it comes from a pipeline that runs on the author's laptop, which is off. These are sample stories, so you can look around. <button type="button" onClick={() => window.location.reload()} className="font-medium text-foreground underline underline-offset-4">Try live data again</button></>
           : <>This build has no API address: set <span className="num">VITE_API_URL</span> and rebuild (on this laptop: <span className="num">make up</span>).</>}
       </span>
     </div>
