@@ -162,3 +162,21 @@ def test_the_eval_checks_cited_stories_against_the_database(db_session):
                        total_matching=1, steps=steps)
     failed = {k for k, v in ask_evals.check(db_session, case, wrong).items() if not v}
     assert failed == {"cited_match", "states_total"}
+
+
+def test_a_rejected_key_is_named_in_the_answer_and_logged(db_session, caplog):
+    import httpx
+    from openai import AuthenticationError
+
+    class Rejecting:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+        def _create(self, **request):
+            raise AuthenticationError("Invalid API key", body=None,
+                                      response=httpx.Response(401, request=httpx.Request("POST", "http://x/v1")))
+
+    with caplog.at_level("WARNING", logger="backend.ask"):
+        result = ask.ask("trending news", db_session, client=Rejecting())
+    assert result.stopped == "error" and "ASK_API_KEY" in result.answer
+    assert "AuthenticationError" in caplog.text and "Invalid API key" in caplog.text

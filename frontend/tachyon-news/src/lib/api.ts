@@ -76,7 +76,9 @@ function qs(w: Window, extra: Record<string, string | number | boolean | undefin
   return p.toString()
 }
 
-const FIRST_CONTACT_MS = 8_000
+// Measured 2026-10-26: the API answers in ~10 ms, the Tailscale Funnel in front of it took 3 to 16 s.
+// Shorter than that and a slow tunnel showed the demo data with the laptop on.
+const FIRST_CONTACT_MS = 20_000
 
 const quoteCache = new Map<string, { at: number; value: Quote | null }>() // key: `${currency}:${symbol}`
 const QUOTE_TTL = 60_000

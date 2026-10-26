@@ -23,7 +23,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from openai import APIError, OpenAI, RateLimitError
+from openai import APIError, AuthenticationError, NotFoundError, OpenAI, RateLimitError
 from sqlalchemy.orm import Session
 
 from backend import ask_tools
@@ -196,9 +196,18 @@ def ask(question: str, db: Session, client: OpenAI | None = None, model: str | N
             response = client.chat.completions.create(model=model, messages=messages, tools=tools,
                                                       tool_choice="auto", temperature=0)
         except APIError as error:
+            # Logged with the cause: on 2026-10-26 "the model service failed" hid a 401 (ASK_API_KEY
+            # was still a placeholder) and the log had nothing to find it from.
+            log.warning("ask: model call failed (%s): %s", type(error).__name__, str(error)[:300])
             result.steps.append({"step": step, "kind": "error", "error": str(error)[:300]})
-            reason = ("the free model providers are rate-limiting right now; try again in a minute"
-                      if isinstance(error, RateLimitError) else "the model service failed")
+            if isinstance(error, RateLimitError):
+                reason = "the free model providers are rate-limiting right now; try again in a minute"
+            elif isinstance(error, AuthenticationError):
+                reason = "the model service rejected the API key (ASK_API_KEY); make doctor shows it"
+            elif isinstance(error, NotFoundError):
+                reason = f"the model service has no model '{model}' (ASK_MODEL)"
+            else:
+                reason = "the model service failed"
             return partial("error", reason)
         message = response.choices[0].message
         usage = response.usage
